@@ -195,16 +195,25 @@ class ProgressiveRefiner:
         if contenders:
             strongest = contenders[0]
             runner = contenders[1]["confidence"] if len(contenders) > 1 else 0.5
-            # A key prediction can guide action when supported and discriminative.
-            # Otherwise explicitly seek information rather than guess.
-            if strongest["confidence"] >= 0.78 and strongest["confidence"] - runner >= 0.13:
+            investigative = [item for item in direct if item[1].kind != "try_key"]
+            current_cues = any(state.key_observations.values())
+            # A past success of the same key and object is not proof the
+            # relationship still holds. Check cheaply available current
+            # evidence before committing to an uncorroborated old result.
+            historical_only = (
+                strongest["provenance"] == ("historical_causal_outcome",)
+                and not current_cues and bool(investigative)
+            )
+            if historical_only:
+                if direct[0][1].kind == "try_key":
+                    desired_label = investigative[0][1].label
+                decision_basis = "verify_historical_applicability"
+            elif strongest["confidence"] >= 0.78 and strongest["confidence"] - runner >= 0.13:
                 desired_label = strongest["action"]
                 decision_basis = "evidence_supported_prediction"
-            elif direct[0][1].kind == "try_key":
-                investigative = [item for item in direct if item[1].kind != "try_key"]
-                if investigative:
-                    desired_label = investigative[0][1].label
-                    decision_basis = "resolve_competing_hypotheses"
+            elif direct[0][1].kind == "try_key" and investigative:
+                desired_label = investigative[0][1].label
+                decision_basis = "resolve_competing_hypotheses"
         ordered = list(direct)
         if desired_label and direct[0][1].label != desired_label:
             chosen = next((row for row in ordered if row[1].label == desired_label), None)
