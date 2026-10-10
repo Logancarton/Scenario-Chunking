@@ -226,6 +226,7 @@ class ExperimentRun:
                 "spread_justifications": dict(stats.spread_justifications),
                 "individual_spread_influence": individual_spread_influence,
                 "spread_detailed_events": stats.spread_detailed_events,
+                "total_detailed_events_this_retrieval": stats.active_detail_events,
                 "neighbor_headers_examined": stats.neighbor_headers_examined,
                 "spread_budget_exhausted": stats.budget_exhausted,
                 "counterfactual_initial_action": original_decision.action.label if original_decision else None,
