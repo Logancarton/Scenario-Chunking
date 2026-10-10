@@ -38,6 +38,7 @@ class MeaningFrame:
     weights: dict[str, float]
     integrated: float
     independent_sources: int
+    examined_event_records: int
 
     def trace(self) -> dict:
         return {
@@ -47,6 +48,7 @@ class MeaningFrame:
             "weights": dict(self.weights),
             "integrated": round(self.integrated, 6),
             "independent_sources": self.independent_sources,
+            "examined_event_records": self.examined_event_records,
         }
 
 
@@ -79,9 +81,11 @@ class MeaningInterpreter:
         context = self.context(state, action)
         # Source ID, not number of retrieved chunks or axes, determines independence.
         sources: dict[str, tuple[dict[str, float], float, bool, str, str]] = {}
+        examined_event_records = 0
         for hit in hits:
             chunk = self.memory.chunks[hit.chunk_id]
             events = self.memory.chunk_events(hit.chunk_id)
+            examined_event_records += len(events)
             attempts = [e for e in events if e.kind == EventKind.ACTION and e.action
                         and self._matches(e.action, action)]
             if not attempts:
@@ -146,11 +150,11 @@ class MeaningInterpreter:
                 self.memory.store_layer_meaning(record[4], axis, action.label, meaning)
 
         if not meanings:
-            return MeaningFrame(context, action.kind, (), {}, 0.0, 0)
+            return MeaningFrame(context, action.kind, (), {}, 0.0, 0, examined_event_records)
         logits = {m.axis: (self.learner.integration_logit(context, m.axis)
                            if adaptive_gate else 0.0) for m in meanings}
         pivot = max(logits.values())
         normalizer = sum(math.exp(v - pivot) for v in logits.values())
         weights = {axis: math.exp(logit - pivot) / normalizer for axis, logit in logits.items()}
         integrated = sum(weights[m.axis] * m.value for m in meanings)
-        return MeaningFrame(context, action.kind, tuple(meanings), weights, integrated, len(sources))
+        return MeaningFrame(context, action.kind, tuple(meanings), weights, integrated, len(sources), examined_event_records)
