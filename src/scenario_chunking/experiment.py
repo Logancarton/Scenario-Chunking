@@ -360,8 +360,7 @@ def run_experiments(
             with traces_path.open("a", encoding="utf-8") as fh:
                 for episode in summary.episodes:
                     for entry in episode.trace:
-                        fh.write(json.dumps({"mode": mode.value, "seed": seed, "episode": episode.episode_id, **entry}, sort_keys=True) + "
-")
+                        fh.write(json.dumps({"mode": mode.value, "seed": seed, "episode": episode.episode_id, **entry}, sort_keys=True) + "\n")
 
     ablation_runs: list[dict[str, Any]] = []
     for seed in seeds:
