@@ -212,3 +212,33 @@ def test_reinstated_grounded_outcome_can_change_snapshot_action():
     assert after.action.key_name == "brass"
     # This proves a grounded policy influence, NOT superior generalization
     # or an improved closed-loop outcome.
+
+
+def test_focused_thought_capacity_is_strict_and_dormant_threads_reenter():
+    memory = EpisodicMemory()
+    chunk, _, _ = outcome_chunk(memory, "brass")
+    hits = [RetrievalHit(chunk.chunk_id, 0.9, ["fixture"])]
+    learner = OutcomeLearner()
+    refiner = ProgressiveRefiner(learner, max_focused=1, max_active=2)
+    selector = ActionSelector(memory, learner, random.Random(1),
+                              meaning_mode="fixed", refiner=refiner)
+    first = None
+    initial_versions = None
+    for i in range(5):
+        state = CognitiveState(episode_id=f"thread-{i}")
+        state.visible_keys = ["steel", "brass"]
+        state.current_time = 10
+        selector.select(state, state.candidate_actions(), hits, refine=True)
+        assert len(refiner._active) <= 2
+        assert sum(t.status_at(10) == "focused"
+                   for t in refiner._active.values()) <= 1
+        assert refiner.thread(state).status_at(10) == "focused"
+        if i == 0:
+            first = state
+            initial_versions = len(refiner.thread(state).versions)
+    assert len(refiner.threads) == 5  # archived continuity, not active cognition
+    first.current_time = 500
+    selector.select(first, first.candidate_actions(), hits, refine=True)
+    assert refiner.thread(first).status_at(500) == "focused"
+    assert len(refiner.thread(first).versions) == initial_versions
+    assert len(refiner._active) <= 2

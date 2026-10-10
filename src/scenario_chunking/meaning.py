@@ -77,17 +77,26 @@ class MeaningInterpreter:
         for hit in hits:
             events = self.memory.chunk_events(hit.chunk_id)
             examined += len(events)
-            attempts = [e for e in events if e.kind == EventKind.ACTION and e.action]
+            attempts = []
+            outcomes_by_cause = {}
+            observations_by_step = {}
+            positions = {}
+            for index, event in enumerate(events):
+                positions[event.event_id] = index
+                if event.kind == EventKind.ACTION and event.action:
+                    attempts.append(event)
+                elif (event.kind == EventKind.OUTCOME and
+                      event.truth_status == TruthStatus.OUTCOME and
+                      event.outcome in ("success", "failure") and event.cause_event_id):
+                    outcomes_by_cause.setdefault(event.cause_event_id, []).append(event)
+                elif (event.kind == EventKind.OBSERVATION and
+                      event.truth_status == TruthStatus.FACT and event.informative):
+                    observations_by_step.setdefault(event.step, []).append(event)
             for attempt in attempts:
-                responses = [
-                    e for e in events
-                    if (e.kind == EventKind.OUTCOME and e.truth_status == TruthStatus.OUTCOME
-                        and e.cause_event_id == attempt.event_id
-                        and e.outcome in ("success", "failure"))
-                    or (e.kind == EventKind.OBSERVATION and e.truth_status == TruthStatus.FACT
-                        and e.informative and e.step == attempt.step
-                        and attempt.action.kind != "try_key")
-                ]
+                responses = list(outcomes_by_cause.get(attempt.event_id, ()))
+                if attempt.action.kind != "try_key":
+                    responses.extend(observations_by_step.get(attempt.step, ()))
+                responses.sort(key=lambda event: positions[event.event_id])
                 key = (attempt.action.kind,
                        attempt.action.key_name if attempt.action.kind == "try_key" else None)
                 pairs.setdefault(key, []).extend(

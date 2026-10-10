@@ -200,3 +200,14 @@ Before Sonara integration, demand reproducible improvement over a strong simple 
 **Architectural correction following the negative smoke test (verification pending):** The inherited five-axis interpreter repeatedly scanned identical retrieved events for every candidate action. Prepare and index those evidence records once per decision, then reuse their validated source references across candidates and refinement stages. Also add lazy thought focus/peripheral/dormant transitions without rewriting historical timestamps. These changes aim to remove redundant examinations and ensure inactive reasoning consumes no repeated processing.
 
 Do not treat a passing unit test, increased version count, or a changed decision as improvement. The existing structural and top-8 baselines remain the primary skeptics. Further held-out test generation, stronger causal-inference checks, budget-matched evaluation across all modes, and independent cross-domain reasoning evidence remain outstanding before any Sonara promotion.
+
+
+### Experiment 5 — Second gate (run #38093694728, commit `a7ad6f3`)
+
+**Verified:** 26 focused and 33 full-suite tests passed, compilation and diff checks passed, and both the standard full baseline benchmark and refinement smoke comparison succeeded.
+
+The evidence reuse change reduced the **single-seed refinement + reinstatement** cost from 1,876 to **514 measured unique detailed-event examinations** (~73% reduction), while preserving 17 actions and 100% completion. Refinement alone required 484 examinations. The corrected-clock structural control used 228 examinations. Thus the refinement path remains approximately 2.25× the structural event-examination proxy even after caching.
+
+**Negative result remains:** No measured action-count improvement and zero within-treatment same-snapshot action changes attributable to the refinement stage on the smoke seed. The small difference in try-key Brier does not establish better decisions. The outcome calibration treatment did not improve these measured actions or Brier compared with fixed refinement. The improvement is computational efficiency **relative to the initial experimental implementation**, not evidence of superior cognition.
+
+**Follow-up correction pending verification:** Rework evidence preparation into a one-pass event index with causal links, cap active-thought bookkeeping without scanning dormant threads, and accurately count the second cognitive stage only when grounded evidence actually exists. Keep the draft experiment isolated. Do not promote to Sonara or claim the Experiment 5 behavioral hypothesis succeeded.

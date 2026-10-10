@@ -71,6 +71,9 @@ class ProgressiveRefiner:
         self.max_versions = max_versions
         self.max_focused = max_focused
         self.max_active = max_active
+        if min(max_versions, max_focused, max_active) < 1 or max_focused > max_active:
+            raise ValueError('thought capacity must be positive with focused <= active')
+        self._active: dict[str, ThoughtThread] = {}
         self.threads: dict[tuple[str, str], ThoughtThread] = {}
 
     def thread(self, state: CognitiveState) -> ThoughtThread:
@@ -84,18 +87,27 @@ class ProgressiveRefiner:
         return self.threads[key]
 
     def _focus(self, thread: ThoughtThread, now: float) -> None:
+        # Only scan the bounded active set; dormant history remains indexed but
+        # receives zero repeated processing until its specific thought is cued.
         thread.activation_strength = min(2.0, thread.activation_at(now) + 1.0)
         thread.activation_last_time = now
-        focused = sorted((t for t in self.threads.values() if t.status_at(now) == 'focused'),
-                         key=lambda t: (-t.activation_at(now), t.thought_id))
+        self._active[thread.thought_id] = thread
+        for tid, candidate in tuple(self._active.items()):
+            if candidate.status_at(now) == 'dormant':
+                del self._active[tid]
+        focused = sorted(
+            (t for t in self._active.values() if t.status_at(now) == 'focused'),
+            key=lambda t: (t is not thread, -t.activation_at(now), t.thought_id),
+        )
         for displaced in focused[self.max_focused:]:
             displaced.activation_strength = min(0.6, displaced.activation_at(now))
             displaced.activation_last_time = now
-        active = sorted((t for t in self.threads.values() if t.status_at(now) != 'dormant'),
-                        key=lambda t: (-t.activation_at(now), t.thought_id))
+        active = sorted(self._active.values(),
+                        key=lambda t: (t is not thread, -t.activation_at(now), t.thought_id))
         for displaced in active[self.max_active:]:
             displaced.activation_strength = 0.0
             displaced.activation_last_time = now
+            del self._active[displaced.thought_id]
 
     @staticmethod
     def _uncertainty(ordered: list[tuple[float, Action, list[str], object]]) -> float:
@@ -193,7 +205,7 @@ class ProgressiveRefiner:
             "thought_id": thread.thought_id, "version": current.number,
             "activation_state": thread.status_at(state.current_time),
             "changed": len(thread.versions) != before_count,
-            "reasoning_cycles": 2 if source_signature else 1,
+            "reasoning_cycles": 2 if any(ids for _, ids, _ in source_signature) else 1,
             "stopped_reason": "no_new_evidence_or_stable" if len(thread.versions) == before_count else "bounded_refinement_complete",
             "current": current.trace(), "history_length": len(thread.versions),
             "meaningfully_changed_action": preferred != sorted(scored, key=lambda x: (-x[0], x[1].label))[0][1].label,
