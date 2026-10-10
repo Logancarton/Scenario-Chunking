@@ -110,6 +110,8 @@ jobs:
               runs = [r for r in d["runs"] if r["mode"] == mode]
               assert len(runs) == 1 and len(runs[0]["episodes"]) == 6
               assert all(step["thought"] for ep in runs[0]["episodes"] for step in ep["trace"])
+              assert all(step["interpretation_event_evaluations"] <= step["total_detailed_events_this_retrieval"]
+                         for ep in runs[0]["episodes"] for step in ep["trace"])
           print("REFINEMENT_METRICS=" + json.dumps({
               mode: {k: d["aggregate"][mode].get(k)
                      for k in ("completion_rate_mean", "actions_mean",

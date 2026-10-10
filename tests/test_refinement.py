@@ -3,9 +3,10 @@ import random
 
 from scenario_chunking.experiment import ExperimentRun
 from scenario_chunking.learning import OutcomeLearner
+from scenario_chunking.meaning import MeaningInterpreter
 from scenario_chunking.memory import EpisodicMemory
 from scenario_chunking.models import (
-    Action, Event, EventKind, RetrievalMode, RetrievalQuery, TruthStatus,
+    Action, Event, EventKind, RetrievalHit, RetrievalMode, RetrievalQuery, TruthStatus,
 )
 from scenario_chunking.policy import ActionSelector
 from scenario_chunking.refinement import ProgressiveRefiner
@@ -144,3 +145,70 @@ def test_live_six_scenario_path_preserves_bounded_resources_and_global_clock():
         assert clocks == sorted(clocks)
         assert all(x > 0 for x in clocks)
     assert any(len(t.versions) >= 1 for t in run.refiner.threads.values())
+
+
+def test_prepared_evidence_is_equivalent_and_processed_once():
+    memory = EpisodicMemory()
+    chunk, _, _ = outcome_chunk(memory, "brass")
+    hits = [RetrievalHit(chunk.chunk_id, 0.9, ["fixture"])]
+    learner = OutcomeLearner()
+    interpreter = MeaningInterpreter(memory, learner)
+    state = CognitiveState(episode_id="current")
+    action = Action("try_key", target="container", key_name="brass")
+    direct = interpreter.evaluate(state, action, hits, learn_layers=False,
+                                  adaptive_gate=False)
+    prepared = interpreter.prepare(hits)
+    reused = interpreter.evaluate(state, action, hits, learn_layers=False,
+                                  adaptive_gate=False, prepared=prepared)
+    assert direct.meanings == reused.meanings
+    assert direct.integrated == reused.integrated
+    assert direct.examined_event_records == prepared.examined_event_records == 2
+    assert reused.examined_event_records == 0
+    state.visible_keys = ["brass", "steel"]
+    choice = ActionSelector(memory, learner, random.Random(0),
+                            meaning_mode="fixed").select(
+                                state, state.candidate_actions(), hits)
+    assert choice.interpretation_event_evaluations == 2
+
+
+def test_refinement_threads_decay_and_resume_without_resetting_history():
+    memory = EpisodicMemory()
+    chunk, _, _ = outcome_chunk(memory, "brass")
+    hits = [RetrievalHit(chunk.chunk_id, 0.9, ["fixture"])]
+    learner = OutcomeLearner()
+    refiner = ProgressiveRefiner(learner)
+    selector = ActionSelector(memory, learner, random.Random(1),
+                              meaning_mode="fixed", refiner=refiner)
+    state = CognitiveState(episode_id="thread")
+    state.visible_keys = ["brass", "steel"]
+    selector.select(state, state.candidate_actions(), hits, refine=True)
+    thread = refiner.thread(state)
+    original = thread.thought_id
+    versions = len(thread.versions)
+    assert thread.status_at(state.current_time) == "focused"
+    assert thread.status_at(500) == "dormant"
+    state.current_time = 500
+    selector.select(state, state.candidate_actions(), hits, refine=True)
+    assert thread.status_at(500) == "focused"
+    assert thread.thought_id == original
+    assert len(thread.versions) == versions
+
+
+def test_reinstated_grounded_outcome_can_change_snapshot_action():
+    memory = EpisodicMemory()
+    negative, _, _ = outcome_chunk(memory, "steel", episode="negative", outcome="failure")
+    positive, _, _ = outcome_chunk(memory, "brass", episode="positive", outcome="success")
+    state = CognitiveState(episode_id="now")
+    state.visible_keys = ["steel", "brass"]
+    original = [RetrievalHit(negative.chunk_id, 0.9, ["initial"])]
+    additional = [RetrievalHit(positive.chunk_id, 0.7, ["reinstated"])]
+    before = ActionSelector(memory, OutcomeLearner(), random.Random(3),
+                            meaning_mode="fixed").select(
+                                state, state.candidate_actions(), original)
+    after = ActionSelector(memory, OutcomeLearner(), random.Random(3),
+                           meaning_mode="fixed").select(
+                               state, state.candidate_actions(), original + additional)
+    assert before.action != after.action
+    assert after.action.key_name == "brass"
+    # This proves a grounded policy influence, NOT superior generalization
+    # or an improved closed-loop outcome.

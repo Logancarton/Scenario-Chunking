@@ -27,7 +27,8 @@ class ActionSelector:
         if not actions:
             raise RuntimeError("no candidate actions")
         scored: list[tuple[float, Action, list[str], object]] = []
-        interpretation_evaluations = 0
+        prepared = self.interpreter.prepare(hits) if self.interpreter else None
+        interpretation_evaluations = prepared.examined_event_records if prepared else 0
         for action in actions:
             features = state.action_features(action)
             base = self._base_prior(action)
@@ -38,6 +39,7 @@ class ActionSelector:
                     state, action, hits,
                     learn_layers=self.meaning_mode in ("learned", "adaptive"),
                     adaptive_gate=self.meaning_mode in ("adaptive", "gate_only"),
+                    prepared=prepared,
                 )
                 memory_evidence = max(-0.45, min(0.45, 0.52 * frame.integrated))
                 interpretation_evaluations += frame.examined_event_records

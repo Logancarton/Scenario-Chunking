@@ -7,6 +7,7 @@ memory. Versions reflect changes in evidence or understanding, not repeated scor
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 from .models import Action, RetrievalHit
 from .state import CognitiveState
@@ -44,6 +45,15 @@ class ThoughtThread:
     initiating_episode: str
     versions: list[ThoughtVersion] = field(default_factory=list)
     outcomes: list[dict[str, object]] = field(default_factory=list)
+    activation_strength: float = 1.0
+    activation_last_time: float = 0.0
+
+    def activation_at(self, now: float, decay_rate: float = 0.08) -> float:
+        return self.activation_strength * math.exp(-decay_rate * max(0.0, now - self.activation_last_time))
+
+    def status_at(self, now: float) -> str:
+        value = self.activation_at(now)
+        return 'focused' if value >= 1.0 else ('peripheral' if value >= 0.2 else 'dormant')
 
 
 class ProgressiveRefiner:
@@ -54,10 +64,13 @@ class ProgressiveRefiner:
     The same signature never generates a redundant new version.
     """
 
-    def __init__(self, learner, *, learning: bool = False, max_versions: int = 256) -> None:
+    def __init__(self, learner, *, learning: bool = False, max_versions: int = 256,
+                 max_focused: int = 2, max_active: int = 4) -> None:
         self.learner = learner
         self.learning = learning
         self.max_versions = max_versions
+        self.max_focused = max_focused
+        self.max_active = max_active
         self.threads: dict[tuple[str, str], ThoughtThread] = {}
 
     def thread(self, state: CognitiveState) -> ThoughtThread:
@@ -70,6 +83,20 @@ class ProgressiveRefiner:
             )
         return self.threads[key]
 
+    def _focus(self, thread: ThoughtThread, now: float) -> None:
+        thread.activation_strength = min(2.0, thread.activation_at(now) + 1.0)
+        thread.activation_last_time = now
+        focused = sorted((t for t in self.threads.values() if t.status_at(now) == 'focused'),
+                         key=lambda t: (-t.activation_at(now), t.thought_id))
+        for displaced in focused[self.max_focused:]:
+            displaced.activation_strength = min(0.6, displaced.activation_at(now))
+            displaced.activation_last_time = now
+        active = sorted((t for t in self.threads.values() if t.status_at(now) != 'dormant'),
+                        key=lambda t: (-t.activation_at(now), t.thought_id))
+        for displaced in active[self.max_active:]:
+            displaced.activation_strength = 0.0
+            displaced.activation_last_time = now
+
     @staticmethod
     def _uncertainty(ordered: list[tuple[float, Action, list[str], object]]) -> float:
         margin = ordered[0][0] - ordered[1][0] if len(ordered) > 1 else 4.0
@@ -79,6 +106,7 @@ class ProgressiveRefiner:
         if not scored:
             raise ValueError("refinement requires candidate actions")
         thread = self.thread(state)
+        self._focus(thread, state.current_time)
         # The existing selector has already evaluated all five layers. Reuse them:
         # no repeat event reads and no inference masquerading as observation.
         revised = []
@@ -163,6 +191,7 @@ class ProgressiveRefiner:
         current = thread.versions[-1]
         return final_order, {
             "thought_id": thread.thought_id, "version": current.number,
+            "activation_state": thread.status_at(state.current_time),
             "changed": len(thread.versions) != before_count,
             "reasoning_cycles": 2 if source_signature else 1,
             "stopped_reason": "no_new_evidence_or_stable" if len(thread.versions) == before_count else "bounded_refinement_complete",
