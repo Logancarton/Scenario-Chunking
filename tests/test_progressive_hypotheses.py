@@ -217,3 +217,20 @@ def test_irrelevant_historical_success_triggers_information_seeking():
     assert new.action.kind != "try_key"
     assert new.thought_trace["decision_basis"] == "reject_unverified_transfer"
     assert new.thought_trace["meaningfully_changed_action"]
+
+
+def test_unrelated_success_cannot_reward_unsupported_refinement():
+    memory = EpisodicMemory()
+    history = _causal_chunk(memory, target="different-lock", key="silver")
+    state = _state("unfamiliar-lock", ("silver",))
+    learner = OutcomeLearner()
+    refiner = ProgressiveRefiner(learner, learning=True)
+    decision = ActionSelector(
+        memory, learner, random.Random(3), meaning_mode="fixed", refiner=refiner,
+    ).select(state, state.candidate_actions(),
+             [RetrievalHit(history.chunk_id, 0.9, ["tag-only"])], refine=True)
+    assert decision.meaning_frame.independent_sources
+    assert not decision.thought_trace["contributing_evidence_ids"]
+    refiner.feedback(state, decision, outcome="success", outcome_event_ids=("outcome-1",))
+    assert not learner.refinement_updates
+    assert refiner.thread(state).outcomes[-1]["outcome"] == "success"
