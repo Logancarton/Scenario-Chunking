@@ -1,5 +1,8 @@
 # Scenario-Chunking
 
+**Research history:** [COGNITIVE_RESEARCH_JOURNAL.md](docs/COGNITIVE_RESEARCH_JOURNAL.md) — three experiments, preserved measurements, failures and hypotheses.
+
+
 A standalone, executable cognitive-architecture experiment testing whether structurally organized episodic memory can improve decisions through sequential experience while avoiding full historical retrieval.
 
 This is **not Sonara production code**, does not use an LLM, and does not claim consciousness or human-level cognition. It is deliberately transparent Python so the mechanisms and failures can be inspected.
@@ -84,6 +87,16 @@ Or without installing the console script:
 ```bash
 PYTHONPATH=src python -m scenario_chunking.cli --output results
 ```
+
+To run the independent layer-meaning and contextual integration ablations in addition to the historical retrieval baselines:
+
+```bash
+scenario-chunking --output results --meaning
+```
+
+The five comparison conditions are existing structural direct scoring; fixed per-layer interpretations; learned per-layer associations with fixed integration; learned meanings with adaptive contextual integration; and fixed meanings with adaptive integration. The last four modes are named `meaning_fixed`, `meaning_learned`, `meaning_adaptive`, and `meaning_gate_only` in output.
+
+Layer meaning traces preserve source-event IDs, confidence and temporal validity. Context gates update after real feedback. Source-deduplicated evidence is integrated only across axes that actually have supporting information. This is a small, interpretable numerical hypothesis, not a claim to replicate biological cognition. The research journal documents the original results and failures without substituting newer runs.
 
 For a faster development run:
 
