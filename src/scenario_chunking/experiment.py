@@ -7,6 +7,7 @@ from pathlib import Path
 import random
 import statistics
 import tracemalloc
+from time import perf_counter
 from typing import Any
 
 from .dashboard import write_dashboard
@@ -172,7 +173,9 @@ class ExperimentRun:
                 paired_direct_action = ActionSelector(self.memory, self.learner, self.rng).select(
                     state, actions, hits).action.label
                 self.rng.setstate(rng_snapshot)
+            decision_started = perf_counter()
             decision = self.selector.select(state, actions, hits)
+            selection_latency_ms = (perf_counter() - decision_started) * 1000.0
             rng_after_selection = self.rng.getstate()
             # Leave-one-out analysis for EACH additional activation. The policy
             # and random exploration state are exactly matched to the live choice.
@@ -259,6 +262,8 @@ class ExperimentRun:
                 "action": action.label,
                 "score": round(decision.score, 5),
                 "predicted_success": round(decision.predicted_success, 5),
+                "selection_latency_ms": selection_latency_ms,
+                "interpretation_event_evaluations": decision.interpretation_event_evaluations,
                 "selection_reasons": decision.reasons,
                 "retrieved_chunks": [{"id": h.chunk_id, "score": round(h.score, 5), "reasons": h.reasons} for h in hits],
                 "initially_activated": list(stats.initial_hit_ids),
@@ -445,6 +450,16 @@ def run_recency_negative_control() -> dict[str, Any]:
     }
 
 
+def _try_key_brier(raw: dict[str, Any]) -> float | None:
+    observations = [
+        (step["predicted_success"], int(step["success"]))
+        for episode in raw["episodes"] for step in episode["trace"]
+        if step["action"].startswith("try_key:")
+    ]
+    return (sum((p - y) ** 2 for p, y in observations) / len(observations)
+            if observations else None)
+
+
 def run_experiments(
     output_dir: str | Path,
     *,
@@ -471,6 +486,7 @@ def run_experiments(
             summary.recency_negative_control_passed = recency_control["fixed_recency_worse"] if mode == RetrievalMode.RECENCY else None
             raw = asdict(summary)
             raw["mode"] = mode.value
+            raw["try_key_brier"] = _try_key_brier(raw)
             raw["peak_memory_bytes"] = peak
             raw["learned_weights"] = run.learner.snapshot()
             raw["preference_snapshots"] = run.preference_snapshots
@@ -489,6 +505,7 @@ def run_experiments(
         summary = run.run()
         raw = asdict(summary)
         raw["mode"] = "structural_no_policy_learning"
+        raw["try_key_brier"] = _try_key_brier(raw)
         raw["peak_memory_bytes"] = 0
         raw["learned_weights"] = run.learner.snapshot()
         raw["preference_snapshots"] = run.preference_snapshots
@@ -505,6 +522,7 @@ def run_experiments(
         tracemalloc.stop()
         raw = asdict(summary)
         raw["mode"] = "structural_topk8"
+        raw["try_key_brier"] = _try_key_brier(raw)
         raw["peak_memory_bytes"] = peak
         raw["learned_weights"] = run.learner.snapshot()
         raw["preference_snapshots"] = run.preference_snapshots
@@ -634,6 +652,16 @@ def _aggregate(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "peak_memory_bytes_mean": statistics.mean(run["peak_memory_bytes"] for run in group),
             "goal_completions": sum(1 for ep in all_eps if ep["success"]),
             "goal_attempts": len(all_eps),
+            "selection_latency_ms_mean": statistics.mean(
+                sum(step.get("selection_latency_ms", 0.0) for ep in run["episodes"]
+                    for step in ep["trace"]) for run in group),
+            "interpretation_event_evaluations_mean": statistics.mean(
+                sum(step.get("interpretation_event_evaluations", 0) for ep in run["episodes"]
+                    for step in ep["trace"]) for run in group),
+            "total_decision_event_evaluations_mean": statistics.mean(
+                sum(ep["retrieval_stats"]["active_detail_events"] for ep in run["episodes"])
+                + sum(step.get("interpretation_event_evaluations", 0) for ep in run["episodes"]
+                    for step in ep["trace"]) for run in group),
             "try_key_brier_mean": statistics.mean(
                 r["try_key_brier"] for r in group if r.get("try_key_brier") is not None
             ) if any(r.get("try_key_brier") is not None for r in group) else None,
