@@ -57,6 +57,12 @@ def write_dashboard(payload: dict[str, Any], path: str | Path) -> None:
                     f"<td>{'yes' if effect['selection_changed_without'] else 'no'}</td>"
                     f"<td>{effect['selected_score_delta']:+.4f}</td></tr>"
                 )
+    identical_snapshot_misses = [
+        {"seed": run["seed"], **item}
+        for run in payload["runs"] if run["mode"] == "structural"
+        for item in run.get("same_snapshot_recovery_audit", [])
+        if item["baseline_missed"]
+    ]
     pref = structural.get("preference_snapshots", [])
     pref_json = html.escape(json.dumps(pref, indent=2))
     control = payload["recency_negative_control"]
@@ -75,7 +81,9 @@ body{{font-family:system-ui,sans-serif;max-width:1180px;margin:32px auto;padding
 <h2>3. Memory activation and bounded spreading</h2><p>Budget: two additional chunks, 18 neighbor-header evaluations, 36 detailed events including the initial top-K, and one hop. Newly activated chunks cannot seed another expansion. The complete per-step justification and budget use are in event_traces.jsonl.</p>
 <h2>3a. Per-neighbor activation effect (paired leave-one-out counterfactual)</h2>
 <table><thead><tr><th>Episode</th><th>Step</th><th>Added chunk</th><th>Routing/evidence justification</th><th>Changed chosen action?</th><th>Chosen-score delta</th></tr></thead><tbody>{''.join(influence_rows)}</tbody></table>
-<h2>3b. Initial misses and observed recovery</h2>
+<h2>3b. Original two misses replayed from identical memory snapshots</h2>
+<pre>{html.escape(json.dumps(identical_snapshot_misses, indent=2)[:14000])}</pre>
+<h2>3c. Initial misses and observed recovery in the live spreading mode</h2>
 <pre>{html.escape(json.dumps([d for d in structural.get("recall_diagnostics", []) if d["initially_missed"]], indent=2)[:12000])}</pre>
 <h2>4. Action preference changes after feedback</h2><pre>{pref_json}</pre>
 <h2>5. Historical events versus current beliefs</h2><p>Episode 3 introduces a replaced lock. The current contradiction is carried in cognitive state and structural retrieval penalizes the old successful key without rewriting the old event.</p>
