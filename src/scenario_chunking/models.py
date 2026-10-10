@@ -157,6 +157,7 @@ class SelectionDecision:
     reasons: list[str]
     retrieval_hits: list[RetrievalHit]
     meaning_frame: Any = None
+    interpretation_event_evaluations: int = 0
 
 
 @dataclass
