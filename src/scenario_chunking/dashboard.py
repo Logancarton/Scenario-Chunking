@@ -46,6 +46,17 @@ def write_dashboard(payload: dict[str, Any], path: str | Path) -> None:
                 f"<td>{html.escape(activated)}</td><td>{html.escape(spread)}</td>"
                 f"<td>{html.escape(influence)}</td><td>{html.escape('; '.join(item['signals'])[:180])}</td></tr>"
             )
+    influence_rows = []
+    for ep in structural["episodes"]:
+        for item in ep["trace"]:
+            for chunk_id, effect in item.get("individual_spread_influence", {}).items():
+                evidence = item["spread_justifications"].get(chunk_id, "")
+                influence_rows.append(
+                    f"<tr><td>{html.escape(ep['episode_id'])}</td><td>{item['step']}</td>"
+                    f"<td>{html.escape(chunk_id)}</td><td>{html.escape(evidence)}</td>"
+                    f"<td>{'yes' if effect['selection_changed_without'] else 'no'}</td>"
+                    f"<td>{effect['selected_score_delta']:+.4f}</td></tr>"
+                )
     pref = structural.get("preference_snapshots", [])
     pref_json = html.escape(json.dumps(pref, indent=2))
     control = payload["recency_negative_control"]
@@ -62,7 +73,9 @@ body{{font-family:system-ui,sans-serif;max-width:1180px;margin:32px auto;padding
 <h2>2. Thought/action trajectory</h2><p>Representative spreading-mode trace. Initial and newly activated memories are separate. Choice-change flags are paired-RNG counterfactual comparisons, not proof of better decisions.</p>
 <table><thead><tr><th>Episode</th><th>Step</th><th>Selected action</th><th>Initial top-K</th><th>One-hop spread</th><th>Selection effect</th><th>Environment feedback</th></tr></thead><tbody>{''.join(trace_rows)}</tbody></table>
 <h2>3. Memory activation and bounded spreading</h2><p>Budget: two additional chunks, 18 neighbor-header evaluations, 36 detailed events including the initial top-K, and one hop. Newly activated chunks cannot seed another expansion. The complete per-step justification and budget use are in event_traces.jsonl.</p>
-<h2>3a. Existing misses and observed recovery</h2>
+<h2>3a. Per-neighbor activation effect (paired leave-one-out counterfactual)</h2>
+<table><thead><tr><th>Episode</th><th>Step</th><th>Added chunk</th><th>Routing/evidence justification</th><th>Changed chosen action?</th><th>Chosen-score delta</th></tr></thead><tbody>{''.join(influence_rows)}</tbody></table>
+<h2>3b. Initial misses and observed recovery</h2>
 <pre>{html.escape(json.dumps([d for d in structural.get("recall_diagnostics", []) if d["initially_missed"]], indent=2)[:12000])}</pre>
 <h2>4. Action preference changes after feedback</h2><pre>{pref_json}</pre>
 <h2>5. Historical events versus current beliefs</h2><p>Episode 3 introduces a replaced lock. The current contradiction is carried in cognitive state and structural retrieval penalizes the old successful key without rewriting the old event.</p>
