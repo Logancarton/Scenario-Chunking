@@ -67,10 +67,12 @@ class ActionSelector:
         if refine:
             if self.refiner is None:
                 raise ValueError('no thought refiner configured')
-            scored, thought_trace = self.refiner.refine(state, scored, hits)
+            scored, thought_trace = self.refiner.refine(state, scored, hits, prepared=prepared)
         scored.sort(key=lambda item: (-item[0], item[1].label))
         score, action, reasons, frame = scored[0]
         predicted_success = 1.0 / (1.0 + math.exp(-score))
+        if thought_trace and thought_trace.get("prediction") is not None:
+            predicted_success = float(thought_trace["prediction"])
         return SelectionDecision(
             action=action,
             score=score,

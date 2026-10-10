@@ -22,10 +22,12 @@ class CognitiveState:
     attempted_actions: list[str] = field(default_factory=list)
     active_memory: list[str] = field(default_factory=list)
     observed_evidence_ids: list[str] = field(default_factory=list)
+    # Source-specific current observations: never confuse a key cue with truth.
+    key_observations: dict[str, list[tuple[str, bool, float, str]]] = field(default_factory=dict)
     beliefs: dict[str, object] = field(default_factory=dict)
     goal_complete: bool = False
 
-    def apply_signal(self, signal: EnvironmentSignal) -> None:
+    def apply_signal(self, signal: EnvironmentSignal, *, event_id: str | None = None) -> None:
         self.current_time += 1.0
         meta = signal.metadata
         if "container_name" in meta:
@@ -38,13 +40,36 @@ class CognitiveState:
             self.person_name = str(meta["person_name"])
         if "visible_keys" in meta:
             self.visible_keys = list(meta["visible_keys"])
-        if "candidate_key" in meta:
-            self.candidate_key = str(meta["candidate_key"])
+        if "candidate_key" in meta and signal.kind == EventKind.OBSERVATION:
+            key = str(meta["candidate_key"])
+            self.candidate_key = key
             self.beliefs["candidate_key_confidence"] = float(signal.confidence)
-        if "contradicts_key" in meta:
-            self.contradicted_keys.add(str(meta["contradicts_key"]))
-            if self.candidate_key == meta["contradicts_key"]:
+            if event_id:
+                self.key_observations.setdefault(key, []).append(
+                    (event_id, True, float(signal.confidence), "observed_clue"))
+        if "contradicts_key" in meta and signal.kind == EventKind.OBSERVATION:
+            key = str(meta["contradicts_key"])
+            self.contradicted_keys.add(key)
+            if event_id:
+                self.key_observations.setdefault(key, []).append(
+                    (event_id, False, float(signal.confidence), "observed_contradiction"))
+            if self.candidate_key == key:
                 self.candidate_key = None
+        # A failed observed attempt is evidence against that key in THIS episode.
+        # Outcome tags are not accepted unless the signal is an actual causal outcome.
+        if (signal.kind == EventKind.OUTCOME and signal.truth_status.value == "outcome"
+                and signal.cause_event_id and signal.outcome in ("failure", "success")):
+            keys = sorted(tag[4:] for tag in signal.semantic_tags if tag.startswith("key:"))
+            if len(keys) == 1:
+                key = keys[0]
+                if event_id:
+                    self.key_observations.setdefault(key, []).append(
+                        (event_id, signal.outcome == "success", float(signal.confidence),
+                         "causal_attempt_outcome"))
+                if signal.outcome == "failure":
+                    self.contradicted_keys.add(key)
+                    if self.candidate_key == key:
+                        self.candidate_key = None
         if "inspected" in meta:
             self.inspected.add(str(meta["inspected"]))
         if "asked_person" in meta:
