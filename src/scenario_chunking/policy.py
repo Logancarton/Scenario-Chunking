@@ -4,26 +4,41 @@ import math
 import random
 
 from .learning import OutcomeLearner
+from .meaning import MeaningInterpreter
 from .memory import EpisodicMemory
 from .models import Action, RetrievalHit, SelectionDecision
 from .state import CognitiveState
 
 
 class ActionSelector:
-    def __init__(self, memory: EpisodicMemory, learner: OutcomeLearner, rng: random.Random) -> None:
+    def __init__(self, memory: EpisodicMemory, learner: OutcomeLearner, rng: random.Random,
+                 *, meaning_mode: str | None = None) -> None:
         self.memory = memory
         self.learner = learner
         self.rng = rng
+        if meaning_mode not in (None, "fixed", "learned", "adaptive", "gate_only"):
+            raise ValueError(f"unknown meaning mode {meaning_mode}")
+        self.meaning_mode = meaning_mode
+        self.interpreter = MeaningInterpreter(memory, learner) if meaning_mode else None
 
     def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit]) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
-        scored: list[tuple[float, Action, list[str]]] = []
+        scored: list[tuple[float, Action, list[str], object]] = []
         for action in actions:
             features = state.action_features(action)
             base = self._base_prior(action)
             learned = self.learner.expected_utility(features)
-            memory_evidence = self._memory_evidence(action, state, hits)
+            frame = None
+            if self.interpreter is not None:
+                frame = self.interpreter.evaluate(
+                    state, action, hits,
+                    learn_layers=self.meaning_mode in ("learned", "adaptive"),
+                    adaptive_gate=self.meaning_mode in ("adaptive", "gate_only"),
+                )
+                memory_evidence = max(-0.45, min(0.45, 0.52 * frame.integrated))
+            else:
+                memory_evidence = self._memory_evidence(action, state, hits)
             clue = 0.78 if "clue_supported" in features else 0.0
             contradiction = -1.15 if "contradicted_key" in features else 0.0
             repeat = -0.32 if action.label in state.attempted_actions else 0.0
@@ -38,9 +53,12 @@ class ActionSelector:
                 f"repeat={repeat:.3f}",
                 f"explore={exploration:.3f}",
             ]
-            scored.append((score, action, reasons))
+            if frame is not None:
+                reasons.append(f"interpreted={frame.integrated:.3f}")
+                reasons.append(f"context={frame.context}")
+            scored.append((score, action, reasons, frame))
         scored.sort(key=lambda item: (-item[0], item[1].label))
-        score, action, reasons = scored[0]
+        score, action, reasons, frame = scored[0]
         predicted_success = 1.0 / (1.0 + math.exp(-score))
         return SelectionDecision(
             action=action,
@@ -48,6 +66,7 @@ class ActionSelector:
             predicted_success=predicted_success,
             reasons=reasons,
             retrieval_hits=hits,
+            meaning_frame=frame,
         )
 
     @staticmethod
