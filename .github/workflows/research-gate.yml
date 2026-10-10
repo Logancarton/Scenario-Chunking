@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "main"]
   workflow_dispatch:
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e ".[test]"
       - name: Focused behavioral tests
-        run: python -m pytest -q tests/test_spreading.py
+        run: python -m pytest -q tests/test_spreading.py tests/test_meaning.py
       - name: Full suite
         run: python -m pytest -q
       - name: Compilation
@@ -31,7 +31,7 @@ jobs:
           git status --short
           test -z "$(git status --porcelain)"
       - name: Run independent benchmark (5 seeds; 1000 distractors)
-        run: scenario-chunking --output results
+        run: scenario-chunking --output results --meaning
       - name: Verify measurement payload
         run: |
           python - <<'PY'
@@ -40,6 +40,12 @@ jobs:
           for key in ("structural", "structural_topk8", "spreading"):
               assert key in d["aggregate"], f"missing {key}"
           assert len(d["seeds"]) == 5
+          assert d["meaning_experiment"]["enabled"]
+          for key in ("meaning_fixed", "meaning_learned", "meaning_gate_only", "meaning_adaptive"):
+              assert key in d["aggregate"], f"missing meaning treatment: {key}"
+          assert all("meaning" in entry for r in d["runs"]
+                     if r["mode"].startswith("meaning_")
+                     for ep in r["episodes"] for entry in ep["trace"])
           assert d["neighbor_budget"]["max_hops"] == 1
           assert all("initially_activated" in entry for r in d["runs"]
                      for ep in r["episodes"] for entry in ep["trace"])
@@ -57,6 +63,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bounded-spreading-research
+          name: independent-meaning-research
           path: results/
           if-no-files-found: ignore
