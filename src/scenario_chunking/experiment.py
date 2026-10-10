@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import copy
 import json
 from pathlib import Path
 import random
@@ -45,6 +46,7 @@ class ExperimentRun:
         self.success_chunks: list[tuple[str, str]] = []  # (chunk_id, key)
         self.preference_snapshots: list[dict[str, float]] = []
         self.recall_diagnostics: list[dict[str, Any]] = []
+        self.same_snapshot_recovery_audit: list[dict[str, Any]] = []
 
     def run(self) -> ExperimentSummary:
         results: list[EpisodeResult] = []
@@ -60,6 +62,16 @@ class ExperimentRun:
         post_recall = []
         recovered = 0
         for query, relevant in recall_queries:
+            shadow_hits = []
+            shadow_stats = None
+            if self.mode == RetrievalMode.STRUCTURAL and self.router.top_k == 6:
+                # Preserve this exact pre-retrieval memory state for a paired
+                # top-6 vs spreading diagnostic. Shadow activations never feed
+                # back into the structural control's state or future actions.
+                shadow_memory = copy.deepcopy(self.memory)
+                shadow_hits, shadow_stats = MemoryRouter(
+                    shadow_memory, RetrievalMode.SPREADING, top_k=6
+                ).retrieve(query)
             hits, stats = self.router.retrieve(query)
             original = set(stats.initial_hit_ids)
             all_hits = {h.chunk_id for h in hits}
@@ -67,6 +79,18 @@ class ExperimentRun:
             post_recall.append(len(all_hits & relevant) / max(1, len(relevant)))
             recovered += len((all_hits - original) & relevant)
             for cid in sorted(relevant):
+                if shadow_stats is not None:
+                    self.same_snapshot_recovery_audit.append({
+                        "relevant_chunk_id": cid,
+                        "query_tags": sorted(query.semantic_tags),
+                        "baseline_initial_hits": list(stats.initial_hit_ids),
+                        "shadow_initial_hits": list(shadow_stats.initial_hit_ids),
+                        "shadow_spread_hits": list(shadow_stats.spread_hit_ids),
+                        "baseline_missed": cid not in original,
+                        "recovered_by_shadow_spread": cid not in original and cid in {
+                            h.chunk_id for h in shadow_hits
+                        },
+                    })
                 score, reasons = self.router._score_chunk(chunk_id=cid, query=query)
                 self.recall_diagnostics.append({
                     "relevant_chunk_id": cid,
@@ -431,6 +455,7 @@ def run_experiments(
             raw["preference_snapshots"] = run.preference_snapshots
             raw["sparse_miss_cases"] = run.sparse_miss_cases()
             raw["recall_diagnostics"] = run.recall_diagnostics
+            raw["same_snapshot_recovery_audit"] = run.same_snapshot_recovery_audit
             summaries.append(raw)
             with traces_path.open("a", encoding="utf-8") as fh:
                 for episode in summary.episodes:
@@ -448,6 +473,7 @@ def run_experiments(
         raw["preference_snapshots"] = run.preference_snapshots
         raw["sparse_miss_cases"] = run.sparse_miss_cases()
         raw["recall_diagnostics"] = run.recall_diagnostics
+        raw["same_snapshot_recovery_audit"] = run.same_snapshot_recovery_audit
         ablation_runs.append(raw)
 
     for seed in seeds:
@@ -463,6 +489,7 @@ def run_experiments(
         raw["preference_snapshots"] = run.preference_snapshots
         raw["sparse_miss_cases"] = run.sparse_miss_cases()
         raw["recall_diagnostics"] = run.recall_diagnostics
+        raw["same_snapshot_recovery_audit"] = run.same_snapshot_recovery_audit
         summaries.append(raw)
         with traces_path.open("a", encoding="utf-8") as fh:
             for episode in summary.episodes:
