@@ -139,7 +139,8 @@ class ExperimentRun:
 
     def _run_episode(self, spec) -> EpisodeResult:
         self.learner.begin_episode()
-        state = CognitiveState(episode_id=spec.episode_id)
+        state = CognitiveState(episode_id=spec.episode_id,
+                               track_outcome_contradictions=bool(self.refiner))
         initial = self.environment.reset(spec)
         init_events: list[Event] = []
         for signal in initial:

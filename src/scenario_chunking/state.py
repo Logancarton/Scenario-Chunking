@@ -26,6 +26,7 @@ class CognitiveState:
     key_observations: dict[str, list[tuple[str, bool, float, str]]] = field(default_factory=dict)
     beliefs: dict[str, object] = field(default_factory=dict)
     goal_complete: bool = False
+    track_outcome_contradictions: bool = False  # Historical scorer remains a frozen comparison
 
     def apply_signal(self, signal: EnvironmentSignal, *, event_id: str | None = None) -> None:
         self.current_time += 1.0
@@ -66,7 +67,7 @@ class CognitiveState:
                     self.key_observations.setdefault(key, []).append(
                         (event_id, signal.outcome == "success", float(signal.confidence),
                          "causal_attempt_outcome"))
-                if signal.outcome == "failure":
+                if signal.outcome == "failure" and self.track_outcome_contradictions:
                     self.contradicted_keys.add(key)
                     if self.candidate_key == key:
                         self.candidate_key = None

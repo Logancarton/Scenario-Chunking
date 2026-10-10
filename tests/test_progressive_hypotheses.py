@@ -114,6 +114,7 @@ def test_histories_for_different_objects_do_not_prove_current_key():
 def test_failed_attempt_becomes_current_contradiction_with_source_provenance():
     state = _state("lock", ("blue", "green"))
     state.candidate_key = "blue"
+    state.track_outcome_contradictions = True
     failure = EnvironmentSignal(
         EventKind.OUTCOME, "Blue failed.", frozenset({"key:blue", "outcome:failure"}),
         TruthStatus.OUTCOME, outcome="failure", cause_event_id="attempt-1",
