@@ -126,13 +126,53 @@ The original ownership remains:
 
 **Stage labels:** Code written = **Built**. Live path and integration tests passing = **Integrated / Tested** only after verified gate output. Result support requires comparative data.
 
-## Experimental results
+## Experimental results — 2026-10-10
 
-**Pending verification.** Results must be transcribed from an executed five-seed research gate, not inferred from the intended algorithm. Preserve the earlier two experiments' numbers above.
+**Tested:** The GitHub Actions research gates for Experiment 3 passed 18 focused tests, 25 total tests, compilation, `git diff --check`, clean-worktree checks, and the full six-scenario/five-seed/1,000-distractor benchmark. Runs #22 and #24 reproduced the outcome differences; run #33 added direct-baseline calibration and interpretation-cost accounting. The archived Experiment 1 and Experiment 2 values above were not overwritten.
 
-Record for each treatment: completion, total/failed/repeated actions, E6 transfer performance, try-key Brier, retrieval recall, detailed-event processing, retrieval and interpretation timing, peak memory, per-axis association changes, context gate changes and action counterfactuals. Distinguish tested behavior from stronger claims about generalization.
+**Five fixed seeds: 7, 23, 61, 101, 149. These figures are per-seed means across the original six episodes.**
 
-If adaptive meanings match or lose to fixed meanings or direct scoring, retain the result as **not supported**, even when the weights visibly change.
+| Architecture | Goal completion | Actions | Failed actions | Repeated actions | Recall | Try-key Brier ↓ |
+|---|---:|---:|---:|---:|---:|---:|
+| Original direct structural | 100% | 16.4 | 4.8 | 0.0 | 93.3% | 0.240 |
+| Independent meanings, fixed | 100% | 20.0 | 5.0 | 1.6 | 90.0% | 0.229 |
+| Learned meanings, fixed integration | 100% | 19.4 | 3.8 | 0.8 | 96.7% | 0.216 |
+| Fixed meanings, learned gate | 100% | 20.0 | 5.0 | 1.6 | 90.0% | 0.229 |
+| Learned meanings and learned gate | 100% | 19.4 | 3.8 | 0.8 | 96.7% | 0.216 |
+
+Lower Brier indicates more accurate estimated probabilities for observed *try-key success/failure* decisions only. It does not measure confidence calibration for informational steps, and lower Brier on five deterministic seeds is not a held-out generalization claim.
+
+**Computation must include the additional interpretation passes over memory**, not just the unchanged router's sparse detail loads:
+
+| Architecture | Retrieval detailed events | Extra event interpretations | Total event examinations | Total selector latency* |
+|---|---:|---:|---:|---:|
+| Original direct structural | 214.8 | 0 | 214.8 | 7.16 ms |
+| Independent meanings, fixed | 273.4 | 1,664.4 | 1,937.8 | 16.50 ms |
+| Learned meanings, fixed integration | 264.6 | 1,578.2 | 1,842.8 | 15.65 ms |
+| Learned meanings + learned gate | 264.6 | 1,578.2 | 1,842.8 | 15.91 ms |
+
+*Measured cumulative selector latency per six-episode seed-run on a GitHub-hosted runner; runs execute different numbers of selected actions. Retrieval adds separate measured latency. Counts include repeated interpreter event examinations for different candidate actions and are processing **proxies**, not CPU FLOPs.*
+
+**Observed learning:** Each of the five adaptive runs updated at least one axis association, and each updated its gate logits. The gate-only condition likewise changed parameters. Fixed conditions changed neither. Approximately 29 chunk/axis/action meaning records were retained per seed-run. The next audit explicitly checks which **individual axes** had evidence, learned associations, and nonzero gate shifts; a collective "weights changed" result must not be misreported as all five axes learning.
+
+**What improved:** Learned meanings reduced failed actions relative to fixed meanings (3.8 vs 5.0), reduced repeated actions (0.8 vs 1.6), improved recall and try-key Brier, and used 0.6 fewer total actions. Thus the layer-learning switch had an observed effect within the new architecture.
+
+**What did not improve:** Against the original structural direct scorer, the complete adaptive architecture took 3.0 additional actions per run (19.4 vs 16.4), and consumed about **8.6×** the detailed event examinations (1,842.8 vs 214.8). Adding gate learning to already learned meanings produced **identical measured actions, failures, retrieval volume and Brier**, despite learned logits. More learning parameters are not sufficient evidence of useful integration.
+
+The last original episode, `E6_relational_transfer`, required means of 2.8 actions under direct structural and 3.4 under each of fixed, learned, and adaptive meanings. This is only one pre-existing transfer scenario, not a genuinely disjoint evaluation suite. Seeds 101 and 149 were not used to tune parameters, but all seeds still ran the same six episode definitions.
+
+**Verdict: Supported in part, otherwise not supported.** Distinct evidence-grounded numerical interpretations can be *built*, integrated, and updated from feedback. Learning their gains changes behavior and improves one limited prediction metric. **The stronger hypothesis—contextual integration produces better overall predictions and actions with acceptable computational cost—was not demonstrated.** There is currently no evidence to promote this architecture into Sonara production.
+
+**Methodological limitations and documented failures:**
+- The five interpretation rules and four context labels are partly hand-engineered. This is not evidence of spontaneous concept formation.
+- Evidence deduplication relies on claimed source IDs; outcome provenance relies on the event recording process. Forged claims can still pass.
+- Existing informative-predecessor policy credit can assign causal influence without proving contribution to later success.
+- Layer-specific gains can update only when that axis already contributed evidence; sparse/missing axes may remain unlearned.
+- Adaptive versus fixed variants have different state trajectories after their first divergent action. Same-RNG local direct-score counterfactuals are available, but later closed-loop states are not paired snapshots.
+- Relative parameter-count/compute-matched training controls, genuinely held-out causal structures, and calibrated confidence for misleading information are still missing.
+- A passing gate establishes execution and measurement integrity; it does not certify learning generalization.
+
+**Artifacts:** CI uploads `independent-meaning-research` containing `results.json`, `event_traces.jsonl` (including axis values, sources, integration weights and updates per decision), and `dashboard.html`. The log prints each experimental mode's measured aggregate. See [GitHub Actions](https://github.com/Logancarton/Scenario-Chunking/actions/workflows/research-gate.yml).
 
 ## What happens next
 
