@@ -321,6 +321,7 @@ class ProgressiveRefiner:
         # An informative inspection is not a goal-success label.
         if (self.learning and outcome in ("success", "failure")
                 and decision.action.kind == "try_key"
+                and decision.thought_trace.get("contributing_evidence_ids")
                 and decision.meaning_frame and decision.meaning_frame.independent_sources):
             self.learner.learn_from_refinement(
                 decision.meaning_frame.context, decision.action.kind,
