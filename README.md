@@ -183,3 +183,62 @@ An unchanged completion rate with fewer retrieved misses but no better
 actions supports a *retrieval improvement only*. The prior baseline
 experiment achieved 30/30 successful tasks across the five seeds, making
 **action efficiency** a more sensitive behavioral metric than raw completion.
+
+
+### Measured bounded-spreading findings (2026-10-10)
+
+The five-seed/1,000-distractor research gate completed all six original
+scenarios for each retrieval variant. The following are observed
+per-seed **means**, not hypothetical outcomes:
+
+| Mode | Initial recall@K | After-spread recall | Goal completion | Actions | Detail-event processing | Retrieval latency* |
+|---|---:|---:|---:|---:|---:|---:|
+| Full historical retrieval | 1.000 | 1.000 | 100% | 16.8 | 8,294 | — |
+| Structural top-6 | 0.933 | 0.933 | 100% | 16.4 | 214.8 | 11.77 ms |
+| Structural top-8 | 0.933 | 0.933 | 100% | 15.6 | 241.6 | 10.98 ms |
+| Structural top-6 + one-hop spreading | 0.633 | 0.967 | 100% | 15.6 | 260.4 | 16.44 ms |
+
+*Retrieval latency is measured on the GitHub-hosted Python runner and
+includes all retrievals per seed-run; it is not an LLM or GPU inference
+benchmark. Detailed-event counts are processing proxies, not measured FLOPs.
+
+Spreading recovered an average of **2 relevant chunks per seed-run** beyond
+its initial top-6, affected the selected action in **2.6 decisions per run**
+and altered the chosen score in **7 decisions per run**. The final recall of
+0.967 versus initial 0.633 shows successful neighbor recovery, but the lower
+initial recall versus the unmodified structural baseline (0.933) indicates
+the altered policy/activation trajectory has changed later retrieval state.
+These are not paired retrieval states and should not be mistaken for
+recovery of the two exact archived failures under identical memory snapshots.
+
+**Negative behavioral result:** Spreading did NOT outperform a simple
+top-8 control on total actions (both 15.6). It had **more failed actions**
+(5.8 vs 5.0 per run), **more detailed-event processing** (260.4 vs 241.6),
+and **higher retrieval latency** (16.44 vs 10.98 ms). All modes already
+achieved 100% goal completion. The evidence supports retrieval recovery,
+not demonstrated net cognitive improvement over top-8. Spreading still
+uses about **96.9% fewer** detailed-event processing operations than full
+history retrieval, preserving most of the overall sparse-memory advantage.
+
+The new trace includes a same-RNG top-K-only counterfactual and, for each
+additional activated memory, a leave-one-out counterfactual with action
+change, selected-score delta, routing justification, and budget use. The
+dashboard exposes these records. It is possible for an activation to change
+a score without changing action, and for an action change not to be beneficial.
+
+**Known failure modes and methodological limits:**
+- A false causal relationship *asserted* with the trusted `observed`
+  provenance passes the routing gate. A dedicated negative control preserves
+  this vulnerability. Provenance checks are not independent causal proof.
+- Top-6 retrieval after spreading has lower baseline recall because its live
+  decisions and activation history can diverge from structural-only mode.
+  Attribution of the two original misses requires a same-snapshot replay.
+- The current action learner has a simple linear policy and the benchmark
+  has ceiling-level completion; outcomes may not generalize to harder tasks.
+- Measured detailed-memory operations remain a proxy, not proof of
+  reduced compute on transformer or other neural hardware.
+
+**Decision:** Retain the new mode as an experimental option, not Sonara's
+default, until it beats a stronger large-top-K control on behavioral quality
+at similar or lower memory cost. Do not promote these findings as a net
+cognitive improvement.
