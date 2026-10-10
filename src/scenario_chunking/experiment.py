@@ -465,6 +465,143 @@ class ExperimentRun:
         return sum(checks) / len(checks) if checks else 1.0
 
 
+
+def run_heldout_refinement_benchmark(
+    seeds: tuple[int, ...] = (7, 23, 61, 101, 149),
+) -> dict[str, Any]:
+    """Independent closed-loop challenge cases; no correct action reaches policy.
+
+    Historical causal observations are created in the experimental environment
+    setup, then all treatments receive equivalent prior evidence and the same
+    task definition and seed. Later trajectories are explicitly NOT paired.
+    """
+    from .environment import EpisodeSpec
+
+    treatments = {
+        "structural": (None, 6),
+        "structural_topk8": (None, 8),
+        "refinement_refine": ("refine", 6),
+        "refinement_associate": ("associate", 6),
+        "refinement_learned": ("learned", 6),
+    }
+    conditions = (
+        "uncertain_misleading_report",
+        "replaced_lock",
+        "irrelevant_history",
+        "clear_current_report",
+        "delayed_feedback",
+    )
+    trials = []
+    for seed in seeds:
+        for condition in conditions:
+            rng = random.Random(1439 * seed + conditions.index(condition))
+            labels = list(rng.sample((
+                "indigo", "silver", "brass", "amber", "copper", "green", "teal",
+                "white", "purple", "nickel", "olive", "bronze", "black", "blue",
+            ), 3))
+            correct, obsolete, distractor = labels
+            target = f"novel-object-{seed}-{condition}"
+            historical = (correct if condition in ("uncertain_misleading_report", "delayed_feedback")
+                          else obsolete)
+            report = obsolete if condition == "uncertain_misleading_report" else correct
+            confidence = 0.22 if condition == "uncertain_misleading_report" else 0.96
+            spec = EpisodeSpec(
+                episode_id=f"H-{condition}-{seed}",
+                container_name=target,
+                storage_name=f"storage-{seed}",
+                work_surface_name=f"bench-{seed}",
+                person_name=f"source-{seed}",
+                keys=(report, correct, distractor) if report != correct
+                     else (obsolete, distractor, correct),
+                correct_key=correct,
+                clue_source="storage",
+                clue_text="A fallible maintenance note reports a key assignment.",
+                reported_key=report,
+                report_confidence=confidence,
+                changed_from_key=obsolete if condition == "replaced_lock" else None,
+                delayed_feedback_events=3 if condition == "delayed_feedback" else 0,
+            )
+            for label, (refinement_mode, top_k) in treatments.items():
+                run = ExperimentRun(
+                    RetrievalMode.STRUCTURAL, seed,
+                    top_k=top_k, distractor_count=0,
+                    refinement_mode=refinement_mode,
+                )
+                if condition != "clear_current_report":
+                    attempt = Action("try_key", target=(
+                        "unrelated-object" if condition == "irrelevant_history" else target),
+                        key_name=historical)
+                    a = Event(
+                        event_id=run.memory.next_event_id(), episode_id=f"training-{seed}",
+                        goal_id="retrieve_object_from_locked_container",
+                        step=1, occurrence_time=1, acquired_time=1, storage_time=1,
+                        kind=EventKind.ACTION, truth_status=TruthStatus.ATTEMPT,
+                        content="Past attempted key.",
+                        semantic_tags=frozenset({f"key:{historical}", "role:key"}),
+                        action=attempt,
+                    )
+                    o = Event(
+                        event_id=run.memory.next_event_id(), episode_id=f"training-{seed}",
+                        goal_id=a.goal_id, step=1, occurrence_time=2,
+                        acquired_time=2, storage_time=2,
+                        kind=EventKind.OUTCOME, truth_status=TruthStatus.OUTCOME,
+                        content="Key previously opened the device.",
+                        semantic_tags=frozenset({
+                            f"key:{historical}", "role:key", "outcome:success"}),
+                        outcome="success", cause_event_id=a.event_id,
+                    )
+                    run.memory.create_chunk(events=[a, o], transition_reason="training_success",
+                                            self_relevance=1.0, salience=0.8)
+                run.clock = 5.0
+                episode = run._run_episode(spec)
+                steps = episode.trace
+                brier = [(step["predicted_success"] - int(step["success"])) ** 2
+                         for step in steps if step["action"].startswith("try_key:")]
+                trials.append({
+                    "seed": seed, "condition": condition, "treatment": label,
+                    "completion": int(episode.success),
+                    "actions": episode.actions,
+                    "failures": episode.failed_actions,
+                    "unnecessary_actions": episode.unnecessary_actions,
+                    "revision_action_changes": sum(bool(step.get("refinement_changed_action"))
+                                                   for step in steps),
+                    "revisions": sum(bool(step.get("thought") and step["thought"]["changed"])
+                                     for step in steps),
+                    "reasoning_cycles": sum(int(step["thought"]["reasoning_cycles"])
+                                            for step in steps if step.get("thought")),
+                    "detail_events": episode.retrieval_stats.active_detail_events,
+                    "interpretation_event_evaluations": sum(
+                        step["interpretation_event_evaluations"] for step in steps),
+                    "reinstated_details": episode.retrieval_stats.reinstatement_detail_events,
+                    "mean_try_key_brier": statistics.mean(brier) if brier else None,
+                    "actions_trace": [step["action"] for step in steps],
+                })
+    summary = {}
+    for condition in conditions:
+        summary[condition] = {}
+        for treatment in treatments:
+            rows = [t for t in trials if t["condition"] == condition
+                    and t["treatment"] == treatment]
+            summary[condition][treatment] = {
+                "completion_rate": statistics.mean(t["completion"] for t in rows),
+                "mean_actions": statistics.mean(t["actions"] for t in rows),
+                "mean_failures": statistics.mean(t["failures"] for t in rows),
+                "mean_revisions": statistics.mean(t["revisions"] for t in rows),
+                "mean_refinement_action_changes": statistics.mean(
+                    t["revision_action_changes"] for t in rows),
+                "mean_detail_events": statistics.mean(t["detail_events"] for t in rows),
+            }
+    return {
+        "seeds": list(seeds),
+        "conditions": list(conditions),
+        "training_test_split": "One synthetic historical outcome precedes each independent held-out episode; "
+                               "no learner training on evaluation outcomes crosses trials.",
+        "matching": "Initial episode evidence and RNG are matched across treatments; "
+                    "closed-loop states diverge after actions.",
+        "summary": summary, "trials": trials,
+    }
+
+
 def run_recency_negative_control() -> dict[str, Any]:
     memory = EpisodicMemory()
     goal = "retrieve_object_from_locked_container"
@@ -703,6 +840,15 @@ def run_experiments(
             "consciousness_claim": False,
         },
     }
+    if include_refinement:
+        heldout = run_heldout_refinement_benchmark(seeds=seeds)
+        payload["heldout_refinement"] = {
+            "conditions": heldout["conditions"], "summary": heldout["summary"],
+            "method": heldout["matching"],
+        }
+        (output / "heldout_refinement.json").write_text(
+            json.dumps(heldout, indent=2, sort_keys=True), encoding="utf-8",
+        )
     (output / "results.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     write_dashboard(payload, output / "dashboard.html")
     return payload
