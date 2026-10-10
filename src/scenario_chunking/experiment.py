@@ -412,7 +412,7 @@ def run_experiments(
             raw["learned_weights"] = run.learner.snapshot()
             raw["preference_snapshots"] = run.preference_snapshots
             raw["sparse_miss_cases"] = run.sparse_miss_cases()
-        raw["recall_diagnostics"] = run.recall_diagnostics
+            raw["recall_diagnostics"] = run.recall_diagnostics
             summaries.append(raw)
             with traces_path.open("a", encoding="utf-8") as fh:
                 for episode in summary.episodes:
@@ -429,7 +429,7 @@ def run_experiments(
         raw["learned_weights"] = run.learner.snapshot()
         raw["preference_snapshots"] = run.preference_snapshots
         raw["sparse_miss_cases"] = run.sparse_miss_cases()
-            raw["recall_diagnostics"] = run.recall_diagnostics
+        raw["recall_diagnostics"] = run.recall_diagnostics
         ablation_runs.append(raw)
 
     for seed in seeds:
