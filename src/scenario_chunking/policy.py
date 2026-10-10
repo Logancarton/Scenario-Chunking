@@ -12,7 +12,7 @@ from .state import CognitiveState
 
 class ActionSelector:
     def __init__(self, memory: EpisodicMemory, learner: OutcomeLearner, rng: random.Random,
-                 *, meaning_mode: str | None = None) -> None:
+                 *, meaning_mode: str | None = None, refiner=None) -> None:
         self.memory = memory
         self.learner = learner
         self.rng = rng
@@ -20,8 +20,10 @@ class ActionSelector:
             raise ValueError(f"unknown meaning mode {meaning_mode}")
         self.meaning_mode = meaning_mode
         self.interpreter = MeaningInterpreter(memory, learner) if meaning_mode else None
+        self.refiner = refiner
 
-    def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit]) -> SelectionDecision:
+    def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit], *,
+               refine: bool = False) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
         scored: list[tuple[float, Action, list[str], object]] = []
@@ -59,6 +61,11 @@ class ActionSelector:
                 reasons.append(f"interpreted={frame.integrated:.3f}")
                 reasons.append(f"context={frame.context}")
             scored.append((score, action, reasons, frame))
+        thought_trace = None
+        if refine:
+            if self.refiner is None:
+                raise ValueError('no thought refiner configured')
+            scored, thought_trace = self.refiner.refine(state, scored, hits)
         scored.sort(key=lambda item: (-item[0], item[1].label))
         score, action, reasons, frame = scored[0]
         predicted_success = 1.0 / (1.0 + math.exp(-score))
@@ -70,6 +77,7 @@ class ActionSelector:
             retrieval_hits=hits,
             meaning_frame=frame,
             interpretation_event_evaluations=interpretation_evaluations,
+            thought_trace=thought_trace,
         )
 
     @staticmethod

@@ -179,3 +179,20 @@ The last original episode, `E6_relational_transfer`, required means of 2.8 actio
 After the gated comparison, the most consequential unresolved question is whether layer meanings generalize to *new causal structures* rather than improving workshop task priors. A discriminating next experiment should hold out different clue reliability patterns and changing rules, train on disjoint scenarios, require calibrated predictions, and compare compute/parameter-matched fixed versus adaptive controls.
 
 Before Sonara integration, demand reproducible improvement over a strong simple baseline, reliable contradiction handling, source provenance robustness and measured learning transfer.
+
+
+## Experiment 5 — Progressive thought refinement (experimental implementation, October 10, 2026)
+
+**Hypothesis:** A persistent thought identity, versioned evidence-grounded interpretations, and bounded cue-based reinstatement might improve decisions beyond one-pass interpretation or longer activation.
+
+**Built in isolated branch (verification pending):** A thought registry in the meaning/refinement owner, contextual provisional interpretations followed by reuse of the existing five-axis evidence frames, immutable version lineage, explicit evidence and contradiction references, uncertainty as an uncalibrated decision-margin heuristic, and a stop condition that avoids a new revision from repeating the same evidence signature. This is *not* an autonomous general reasoning engine; the maximum two stages are contextual hypothesis and evidence integration. It does not independently derive arbitrary new causal hypotheses.
+
+**Retrieval experiment:** A bounded indexed cue reinstater can discover key-associated chunks outside the initial top-K from existing inverted indexes. It examines at most 18 additional headers, restores at most two chunks, and caps total retrieval detail events at 36. It verifies causal attempt/outcome linkage before accepting an association. Both rejected reads and accepted reads count toward the budget. This is not unrestricted associative spreading and does not scan full detailed history.
+
+**Feedback path:** The existing learner calibrates the influence of evidence-supported action interpretation only following observed success/failure of the selected key attempt. The system never rewards a revision merely for changing or treats information gain as successful key retrieval.
+
+**Temporal correction:** The cognitive state's decision clock now uses the global event clock after observation and feedback boundaries. Original historical occurrence, acquisition, and storage timestamps remain unchanged. Historical archived baseline measurements remain locked.
+
+**Comparison switches:** `--refinement` adds context refinement alone, refinement plus cue reinstatement, and refinement with outcome-grounded calibration, alongside the unchanged structural controls. Trace fields report thought/version lineage, retrieved and reinstated chunk IDs, grounded evidence sources, changed paired actions, clocks, and detail costs.
+
+**Measurement status:** Pending CI / reproducible experiment measurements. Do not treat a passing unit test, increased version count, or a changed decision as improvement. The existing structural and top-8 baselines remain the primary skeptics. Further held-out test generation, stronger causal-inference checks, budget-matched evaluation across all modes, and independent cross-domain reasoning evidence remain outstanding before any Sonara promotion.

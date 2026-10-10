@@ -134,6 +134,9 @@ class RetrievalStats:
     spread_detailed_events: int = 0
     neighbor_headers_examined: int = 0
     budget_exhausted: bool = False
+    reinstated_hit_ids: list[str] = field(default_factory=list)
+    reinstatement_headers_examined: int = 0
+    reinstatement_detail_events: int = 0
 
     def __iadd__(self, other: "RetrievalStats") -> "RetrievalStats":
         self.total_chunks += other.total_chunks
@@ -145,6 +148,9 @@ class RetrievalStats:
         self.unnecessary_activations += other.unnecessary_activations
         self.spread_detailed_events += other.spread_detailed_events
         self.neighbor_headers_examined += other.neighbor_headers_examined
+        self.reinstatement_headers_examined += other.reinstatement_headers_examined
+        self.reinstatement_detail_events += other.reinstatement_detail_events
+        self.reinstated_hit_ids.extend(other.reinstated_hit_ids)
         self.budget_exhausted = self.budget_exhausted or other.budget_exhausted
         return self
 
@@ -158,6 +164,7 @@ class SelectionDecision:
     retrieval_hits: list[RetrievalHit]
     meaning_frame: Any = None
     interpretation_event_evaluations: int = 0
+    thought_trace: Any = None
 
 
 @dataclass

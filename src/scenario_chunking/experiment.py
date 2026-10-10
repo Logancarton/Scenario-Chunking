@@ -27,21 +27,31 @@ from .models import (
     TruthStatus,
 )
 from .policy import ActionSelector
-from .retrieval import MemoryRouter, retrieval_recall_at_k
+from .refinement import ProgressiveRefiner
+from .retrieval import IndexedCueReinstater, MemoryRouter, retrieval_recall_at_k
 from .state import CognitiveState
 
 
 class ExperimentRun:
-    def __init__(self, mode: RetrievalMode, seed: int, *, top_k: int = 6, distractor_count: int = 1000, learning_enabled: bool = True, meaning_mode: str | None = None) -> None:
+    def __init__(self, mode: RetrievalMode, seed: int, *, top_k: int = 6, distractor_count: int = 1000, learning_enabled: bool = True, meaning_mode: str | None = None, refinement_mode: str | None = None) -> None:
         self.mode = mode
+        if refinement_mode not in (None, 'refine', 'associate', 'learned'):
+            raise ValueError('unknown refinement mode')
         self.meaning_mode = meaning_mode
+        self.refinement_mode = refinement_mode
         self.seed = seed
         self.rng = random.Random(seed)
         self.memory = EpisodicMemory()
         self.learner = OutcomeLearner(enabled=learning_enabled)
         self.environment = LockedWorkshop(seed)
         self.router = MemoryRouter(self.memory, mode, top_k=top_k)
-        self.selector = ActionSelector(self.memory, self.learner, self.rng, meaning_mode=meaning_mode)
+        self.refiner = (ProgressiveRefiner(self.learner, learning=refinement_mode == 'learned')
+                        if refinement_mode else None)
+        self.reinstater = (IndexedCueReinstater(self.memory)
+                           if refinement_mode in ('associate', 'learned') else None)
+        self.selector = ActionSelector(self.memory, self.learner, self.rng,
+                                      meaning_mode=meaning_mode or ('fixed' if refinement_mode else None),
+                                      refiner=self.refiner)
         self.clock = 0.0
         self.distractor_count = distractor_count
         self.learning_enabled = learning_enabled
@@ -136,6 +146,9 @@ class ExperimentRun:
             event = self._event_from_signal(signal, state, step=0)
             init_events.append(event)
             state.apply_signal(signal)
+            if event.kind in (EventKind.OBSERVATION, EventKind.OUTCOME):
+                state.observed_evidence_ids.append(event.event_id)
+        state.current_time = self.clock
         self.memory.create_chunk(
             events=init_events,
             transition_reason="goal_begins",
@@ -152,6 +165,11 @@ class ExperimentRun:
         for step in range(1, max_actions + 1):
             query = state.retrieval_query()
             hits, stats = self.router.retrieve(query)
+            if self.reinstater is not None:
+                hits += self.reinstater.expand(
+                    query, state.candidate_actions(), hits, stats,
+                    rank_header=lambda cid, q: self.router._score_chunk(chunk_id=cid, query=q),
+                )
             aggregate += stats
             state.active_memory = [h.chunk_id for h in hits]
             for hit in hits:
@@ -173,8 +191,16 @@ class ExperimentRun:
                 paired_direct_action = ActionSelector(self.memory, self.learner, self.rng).select(
                     state, actions, hits).action.label
                 self.rng.setstate(rng_snapshot)
+            paired_refinement_action = None
+            if self.refiner is not None:
+                self.rng.setstate(rng_snapshot)
+                paired_refinement_action = ActionSelector(
+                    self.memory, self.learner, self.rng,
+                    meaning_mode=self.selector.meaning_mode,
+                ).select(state, actions, hits).action.label
+                self.rng.setstate(rng_snapshot)
             decision_started = perf_counter()
-            decision = self.selector.select(state, actions, hits)
+            decision = self.selector.select(state, actions, hits, refine=self.refiner is not None)
             selection_latency_ms = (perf_counter() - decision_started) * 1000.0
             rng_after_selection = self.rng.getstate()
             # Leave-one-out analysis for EACH additional activation. The policy
@@ -214,6 +240,8 @@ class ExperimentRun:
                 event = self._event_from_signal(signal, state, step)
                 outcome_events.append(event)
                 state.apply_signal(signal)
+                if event.kind in (EventKind.OBSERVATION, EventKind.OUTCOME):
+                    state.observed_evidence_ids.append(event.event_id)
                 if signal.informative and signal.kind == EventKind.OBSERVATION:
                     action_informative = True
                 if signal.outcome == "failure":
@@ -223,6 +251,13 @@ class ExperimentRun:
                 if signal.outcome == "success":
                     action_succeeded = True
                     self.learner.apply_success(signal.cause_event_id or action_event.event_id, signal.reward)
+            state.current_time = self.clock
+            if self.refiner is not None:
+                self.refiner.feedback(
+                    state, decision,
+                    outcome='success' if action_succeeded else ('failure' if action_failed else None),
+                    outcome_event_ids=tuple(e.event_id for e in outcome_events if e.kind == EventKind.OUTCOME),
+                )
             if action_informative:
                 self.learner.mark_informative(action_event.event_id)
             if not action_informative and not action_succeeded:
@@ -282,6 +317,13 @@ class ExperimentRun:
                 "contradicted_keys": sorted(state.contradicted_keys),
                 "learner_weights": self.learner.snapshot(),
                 "meaning": decision.meaning_frame.trace() if decision.meaning_frame else None,
+                "thought": decision.thought_trace,
+                "reinstated_chunks": list(stats.reinstated_hit_ids),
+                "reinstatement_headers_examined": stats.reinstatement_headers_examined,
+                "reinstatement_detail_events": stats.reinstatement_detail_events,
+                "paired_refinement_action": paired_refinement_action,
+                "refinement_changed_action": bool(paired_refinement_action and paired_refinement_action != action.label),
+                "clock_at_decision": query.current_time,
                 "meaning_learning": self.learner.meaning_snapshot() if self.meaning_mode else None,
                 "paired_direct_action": paired_direct_action,
                 "paired_direct_choice_changed": bool(paired_direct_action and paired_direct_action != action.label),
@@ -467,6 +509,7 @@ def run_experiments(
     modes: tuple[RetrievalMode, ...] = tuple(RetrievalMode),
     distractor_count: int = 1000,
     include_meaning: bool = False,
+    include_refinement: bool = False,
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -577,6 +620,38 @@ def run_experiments(
                                 "episode": episode.episode_id, **entry,
                             }, sort_keys=True) + "\n")
 
+
+    if include_refinement:
+        # Independent closed-loop trajectories. Same-seed, same-snapshot action
+        # comparisons are also captured by paired_refinement_action on each step.
+        for treatment in ("refine", "associate", "learned"):
+            for seed in seeds:
+                tracemalloc.start()
+                run = ExperimentRun(RetrievalMode.STRUCTURAL, seed,
+                                    distractor_count=distractor_count,
+                                    refinement_mode=treatment)
+                summary = run.run()
+                _, peak = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                raw = asdict(summary)
+                raw["mode"] = "refinement_" + treatment
+                raw["try_key_brier"] = _try_key_brier(raw)
+                raw["peak_memory_bytes"] = peak
+                raw["learned_weights"] = run.learner.snapshot()
+                raw["refinement_learning_updates"] = len(run.learner.refinement_updates)
+                raw["thought_versions"] = sum(len(t.versions) for t in run.refiner.threads.values())
+                raw["paired_refinement_action_changes"] = sum(
+                    int(step.get("refinement_changed_action", False))
+                    for ep in summary.episodes for step in ep.trace)
+                summaries.append(raw)
+                with traces_path.open("a", encoding="utf-8") as fh:
+                    for episode in summary.episodes:
+                        for entry in episode.trace:
+                            fh.write(json.dumps({
+                                "mode": raw["mode"], "seed": seed,
+                                "episode": episode.episode_id, **entry,
+                            }, sort_keys=True) + "\n")
+
     aggregate = _aggregate(summaries)
     ablation_aggregate = _aggregate(ablation_runs).get("structural_no_policy_learning", {})
     payload = {
@@ -586,6 +661,13 @@ def run_experiments(
         "neighbor_budget": {"max_additional_chunks": 2, "max_neighbor_headers": 18, "max_total_detail_events": 36, "max_hops": 1},
         "runs": summaries,
         "aggregate": aggregate,
+        "refinement_experiment": {
+            "enabled": include_refinement,
+            "treatments": ["refinement_refine", "refinement_associate", "refinement_learned"]
+                          if include_refinement else [],
+            "matched_snapshot_note": "Paired actions share the within-treatment evidence and RNG; "
+                                     "different closed-loop trajectories are not equivalent snapshots.",
+        },
         "meaning_experiment": {
             "enabled": include_meaning,
             "treatments": ["structural", "meaning_fixed", "meaning_learned",
@@ -641,6 +723,9 @@ def _aggregate(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "spread_action_score_influences_mean": statistics.mean(run["spread_action_score_influences"] for run in group),
             "spread_details_mean": statistics.mean(sum(ep["retrieval_stats"]["spread_detailed_events"] for ep in run["episodes"]) for run in group),
             "neighbor_headers_mean": statistics.mean(sum(ep["retrieval_stats"]["neighbor_headers_examined"] for ep in run["episodes"]) for run in group),
+            "reinstatement_details_mean": statistics.mean(sum(ep["retrieval_stats"]["reinstatement_detail_events"] for ep in run["episodes"]) for run in group),
+            "thought_versions_mean": statistics.mean(run.get("thought_versions", 0) for run in group),
+            "paired_refinement_action_changes_mean": statistics.mean(run.get("paired_refinement_action_changes", 0) for run in group),
             "temporal_order_accuracy_mean": statistics.mean(run["temporal_order_accuracy"] for run in group),
             "delayed_credit_accuracy_mean": statistics.mean(run["delayed_credit_accuracy"] for run in group),
             "outdated_retrievals_mean": statistics.mean(sum(ep["outdated_retrievals"] for ep in run["episodes"]) for run in group),

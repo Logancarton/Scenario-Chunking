@@ -20,7 +20,7 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e ".[test]"
       - name: Focused behavioral tests
-        run: python -m pytest -q tests/test_spreading.py tests/test_meaning.py
+        run: python -m pytest -q tests/test_spreading.py tests/test_meaning.py tests/test_refinement.py
       - name: Full suite
         run: python -m pytest -q
       - name: Compilation
@@ -97,10 +97,34 @@ jobs:
                                              for r in relevant],
                   }, sort_keys=True))
           PY
+      - name: Run bounded refinement research smoke benchmark
+        run: scenario-chunking --output results-refinement --modes structural --seeds 7 --distractors 35 --refinement
+      - name: Verify refinement payload
+        run: |
+          python - <<'PY'
+          import json
+          d = json.load(open("results-refinement/results.json"))
+          assert d["refinement_experiment"]["enabled"]
+          for mode in ("refinement_refine", "refinement_associate", "refinement_learned"):
+              assert mode in d["aggregate"]
+              runs = [r for r in d["runs"] if r["mode"] == mode]
+              assert len(runs) == 1 and len(runs[0]["episodes"]) == 6
+              assert all(step["thought"] for ep in runs[0]["episodes"] for step in ep["trace"])
+          print("REFINEMENT_METRICS=" + json.dumps({
+              mode: {k: d["aggregate"][mode].get(k)
+                     for k in ("completion_rate_mean", "actions_mean",
+                               "try_key_brier_mean", "total_decision_event_evaluations_mean",
+                               "reinstatement_details_mean", "thought_versions_mean",
+                               "paired_refinement_action_changes_mean")}
+              for mode in ("structural", "refinement_refine", "refinement_associate", "refinement_learned")
+          }, sort_keys=True))
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: independent-meaning-research
-          path: results/
+          path: |
+            results/
+            results-refinement/
           if-no-files-found: ignore

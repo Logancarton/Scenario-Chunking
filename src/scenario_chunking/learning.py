@@ -27,6 +27,9 @@ class OutcomeLearner:
         self.meaning_gains: dict[tuple[str, str, str], float] = defaultdict(float)
         self.gate_logits: dict[tuple[str, str], float] = defaultdict(float)
         self.meaning_updates: list[dict[str, object]] = []
+        # Prediction-calibration correction, not credit for mere thought revision.
+        self.refinement_bias: dict[tuple[str, str], float] = defaultdict(float)
+        self.refinement_updates: list[dict[str, object]] = []
 
     def begin_episode(self) -> None:
         self.episode_trace = []
@@ -125,6 +128,26 @@ class OutcomeLearner:
             "observed_benefit": beneficial, "probability": probability,
             "axes_with_evidence": [m.axis for m in frame.meanings],
             "learned_layers": learn_layers, "learned_integration": learn_gate,
+        })
+
+    def refinement_adjustment(self, context: str, action_kind: str) -> float:
+        return self.refinement_bias[(context, action_kind)] if self.enabled else 0.0
+
+    def learn_from_refinement(self, context: str, action_kind: str, *,
+                              predicted: float, outcome: bool) -> None:
+        if not self.enabled:
+            return
+        if not 0.0 <= predicted <= 1.0:
+            raise ValueError('predicted probability outside [0,1]')
+        # Only the causal attempt outcome; never reward a revision just for changing.
+        residual = float(outcome) - predicted
+        key = (context, action_kind)
+        self.refinement_bias[key] = max(-0.2, min(0.2,
+            self.refinement_bias[key] + 0.12 * residual))
+        self.refinement_updates.append({
+            'context': context, 'action_kind': action_kind,
+            'predicted': predicted, 'observed_success': outcome,
+            'residual': residual,
         })
 
     def meaning_snapshot(self) -> dict[str, dict[str, float]]:

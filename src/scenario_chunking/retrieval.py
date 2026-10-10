@@ -4,7 +4,7 @@ import math
 from time import perf_counter
 
 from .memory import EpisodicMemory
-from .models import EventKind, RetrievalHit, RetrievalMode, RetrievalQuery, RetrievalStats
+from .models import EventKind, TruthStatus, RetrievalHit, RetrievalMode, RetrievalQuery, RetrievalStats
 from .spreading import BoundedNeighborActivator, SpreadBudget
 
 
@@ -127,6 +127,80 @@ class MemoryRouter:
         elif self.mode == RetrievalMode.FULL:
             reasons.append("full_scan")
         return score, reasons
+
+
+class IndexedCueReinstater:
+    """Bounded header-index discovery, including memories outside initial top-K.
+
+    Only specific entity/key indexes seed candidates. Historical detail is read
+    after ranking, with strict accounting and observed-outcome provenance checks.
+    """
+
+    def __init__(self, memory: EpisodicMemory, *, max_headers: int = 18,
+                 max_additional: int = 2, max_total_detail_events: int = 36) -> None:
+        self.memory = memory
+        self.max_headers = max_headers
+        self.max_additional = max_additional
+        self.max_total_detail_events = max_total_detail_events
+
+    def expand(self, query: RetrievalQuery, actions, initial_hits: list[RetrievalHit],
+               stats: RetrievalStats, *, rank_header) -> list[RetrievalHit]:
+        seen = {h.chunk_id for h in initial_hits}
+        if self.max_additional <= 0 or stats.active_detail_events >= self.max_total_detail_events:
+            return []
+        # The current problem supplies cues, not any hidden solution.
+        specific_tags = sorted({f"key:{a.key_name}" for a in actions
+                                if a.kind == "try_key" and a.key_name})
+        candidates = set()
+        for tag in specific_tags:
+            candidates.update(self.memory.tag_index.get(tag, ()))
+        proposals = []
+        for cid in sorted(candidates):
+            if cid in seen:
+                continue
+            if stats.reinstatement_headers_examined >= self.max_headers:
+                stats.budget_exhausted = True
+                break
+            stats.reinstatement_headers_examined += 1
+            chunk = self.memory.chunks[cid]
+            if chunk.header.goal_id != query.goal_id:
+                continue
+            if not ("outcome:success" in chunk.semantic_tags or "outcome:failure" in chunk.semantic_tags):
+                continue
+            if any(f"key:{key}" in chunk.semantic_tags and "outcome:success" in chunk.semantic_tags
+                   for key in query.contradicted_keys):
+                continue
+            score, _ = rank_header(cid, query)
+            if score > 0:
+                proposals.append((score, cid))
+        found = []
+        for score, cid in sorted(proposals, key=lambda item: (-item[0], item[1])):
+            if len(found) >= self.max_additional:
+                break
+            cost = len(self.memory.chunks[cid].event_ids)
+            if stats.active_detail_events + cost > self.max_total_detail_events:
+                stats.budget_exhausted = True
+                continue
+            # Charge the event read even if evidence proves invalid.
+            events = self.memory.chunk_events(cid)
+            stats.detail_loads += 1
+            stats.active_detail_events += cost
+            stats.reinstatement_detail_events += cost
+            attempts = {e.event_id: e for e in events
+                        if e.kind == EventKind.ACTION and e.action and e.action.kind == "try_key"}
+            valid = any(
+                e.kind == EventKind.OUTCOME and e.truth_status == TruthStatus.OUTCOME
+                and e.outcome in ("success", "failure") and e.cause_event_id in attempts
+                and f"key:{attempts[e.cause_event_id].action.key_name}" in specific_tags
+                for e in events
+            )
+            if not valid:
+                continue
+            hit = RetrievalHit(cid, score, ["indexed_cue", "verified_outcome"])
+            found.append(hit)
+            stats.reinstated_hit_ids.append(cid)
+            self.memory.activate(cid, query.current_time)
+        return found
 
 
 def retrieval_recall_at_k(

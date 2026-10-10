@@ -21,6 +21,7 @@ class CognitiveState:
     asked_people: set[str] = field(default_factory=set)
     attempted_actions: list[str] = field(default_factory=list)
     active_memory: list[str] = field(default_factory=list)
+    observed_evidence_ids: list[str] = field(default_factory=list)
     beliefs: dict[str, object] = field(default_factory=dict)
     goal_complete: bool = False
 
