@@ -31,15 +31,16 @@ from .state import CognitiveState
 
 
 class ExperimentRun:
-    def __init__(self, mode: RetrievalMode, seed: int, *, top_k: int = 6, distractor_count: int = 1000, learning_enabled: bool = True) -> None:
+    def __init__(self, mode: RetrievalMode, seed: int, *, top_k: int = 6, distractor_count: int = 1000, learning_enabled: bool = True, meaning_mode: str | None = None) -> None:
         self.mode = mode
+        self.meaning_mode = meaning_mode
         self.seed = seed
         self.rng = random.Random(seed)
         self.memory = EpisodicMemory()
         self.learner = OutcomeLearner(enabled=learning_enabled)
         self.environment = LockedWorkshop(seed)
         self.router = MemoryRouter(self.memory, mode, top_k=top_k)
-        self.selector = ActionSelector(self.memory, self.learner, self.rng)
+        self.selector = ActionSelector(self.memory, self.learner, self.rng, meaning_mode=meaning_mode)
         self.clock = 0.0
         self.distractor_count = distractor_count
         self.learning_enabled = learning_enabled
@@ -165,6 +166,12 @@ class ExperimentRun:
             if self.mode == RetrievalMode.SPREADING:
                 original_decision = self.selector.select(state, actions, hits[: self.router.top_k])
                 self.rng.setstate(rng_snapshot)
+            paired_direct_action = None
+            if self.meaning_mode is not None:
+                self.rng.setstate(rng_snapshot)
+                paired_direct_action = ActionSelector(self.memory, self.learner, self.rng).select(
+                    state, actions, hits).action.label
+                self.rng.setstate(rng_snapshot)
             decision = self.selector.select(state, actions, hits)
             rng_after_selection = self.rng.getstate()
             # Leave-one-out analysis for EACH additional activation. The policy
@@ -217,6 +224,15 @@ class ExperimentRun:
                 self.learner.mark_informative(action_event.event_id)
             if not action_informative and not action_succeeded:
                 unnecessary += 1
+            if self.meaning_mode and decision.meaning_frame is not None:
+                # Only actual observed outcome or immediate information gain.
+                # No reward from future hidden environment state.
+                self.learner.learn_from_meaning(
+                    decision.meaning_frame,
+                    beneficial=action_succeeded or action_informative,
+                    learn_layers=self.meaning_mode in ("learned", "adaptive"),
+                    learn_gate=self.meaning_mode in ("adaptive", "gate_only"),
+                )
 
             salience = 1.0 if action_succeeded else (0.82 if action_failed or action_informative else 0.35)
             reason = "action_succeeds" if action_succeeded else ("action_fails" if action_failed else ("state_changes" if action_informative else "action_cycle"))
@@ -260,6 +276,10 @@ class ExperimentRun:
                 "candidate_key": state.candidate_key,
                 "contradicted_keys": sorted(state.contradicted_keys),
                 "learner_weights": self.learner.snapshot(),
+                "meaning": decision.meaning_frame.trace() if decision.meaning_frame else None,
+                "meaning_learning": self.learner.meaning_snapshot() if self.meaning_mode else None,
+                "paired_direct_action": paired_direct_action,
+                "paired_direct_choice_changed": bool(paired_direct_action and paired_direct_action != action.label),
                 "success": action_succeeded,
             })
             if state.goal_complete:
@@ -431,6 +451,7 @@ def run_experiments(
     seeds: tuple[int, ...] = (7, 23, 61, 101, 149),
     modes: tuple[RetrievalMode, ...] = tuple(RetrievalMode),
     distractor_count: int = 1000,
+    include_meaning: bool = False,
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -496,6 +517,48 @@ def run_experiments(
                 for entry in episode.trace:
                     fh.write(json.dumps({"mode": "structural_topk8", "seed": seed, "episode": episode.episode_id, **entry}, sort_keys=True) + "\n")
 
+    if include_meaning:
+        # Four treatments isolate interpretation, axis learning, and gate learning.
+        # Identical random seeds/candidate evidence within each start state; distinct
+        # closed-loop action trajectories are explicitly NOT paired future states.
+        for treatment in ("fixed", "learned", "gate_only", "adaptive"):
+            for seed in seeds:
+                tracemalloc.start()
+                run = ExperimentRun(
+                    RetrievalMode.STRUCTURAL, seed,
+                    distractor_count=distractor_count, meaning_mode=treatment,
+                )
+                summary = run.run()
+                _, peak = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                raw = asdict(summary)
+                raw["mode"] = "meaning_" + treatment
+                raw["peak_memory_bytes"] = peak
+                raw["learned_weights"] = run.learner.snapshot()
+                raw["meaning_snapshot"] = run.learner.meaning_snapshot()
+                raw["layer_meanings_stored"] = len(run.memory.layer_meanings)
+                raw["paired_direct_action_changes"] = sum(
+                    int(step.get("paired_direct_choice_changed", False))
+                    for ep in summary.episodes for step in ep.trace
+                )
+                # Goal-outcome probability calibration uses try-key attempts only:
+                # informative inspections do not count as completed goals.
+                attempts = [(step["predicted_success"], int(step["success"]))
+                            for ep in summary.episodes for step in ep.trace
+                            if step["action"].startswith("try_key:")]
+                raw["try_key_brier"] = (
+                    sum((p - y) ** 2 for p, y in attempts) / len(attempts)
+                    if attempts else None
+                )
+                summaries.append(raw)
+                with traces_path.open("a", encoding="utf-8") as fh:
+                    for episode in summary.episodes:
+                        for entry in episode.trace:
+                            fh.write(json.dumps({
+                                "mode": raw["mode"], "seed": seed,
+                                "episode": episode.episode_id, **entry,
+                            }, sort_keys=True) + "\n")
+
     aggregate = _aggregate(summaries)
     ablation_aggregate = _aggregate(ablation_runs).get("structural_no_policy_learning", {})
     payload = {
@@ -505,6 +568,18 @@ def run_experiments(
         "neighbor_budget": {"max_additional_chunks": 2, "max_neighbor_headers": 18, "max_total_detail_events": 36, "max_hops": 1},
         "runs": summaries,
         "aggregate": aggregate,
+        "meaning_experiment": {
+            "enabled": include_meaning,
+            "treatments": ["structural", "meaning_fixed", "meaning_learned",
+                           "meaning_gate_only", "meaning_adaptive"] if include_meaning else [],
+            "train_episodes": ["E1_initial", "E2_similar", "E3_temporal_interference",
+                               "E4_distractor_load", "E5_delayed_feedback"],
+            "held_out_episode": "E6_relational_transfer",
+            "held_out_seeds": [x for x in seeds if x in (101, 149)],
+            "interpretation": "Same initial seeds and retrieval algorithm. Different closed-loop "
+                              "trajectories are not matched memory states; paired_direct_action "
+                              "compares decisions on the SAME within-treatment evidence.",
+        },
         "ablations": {
             "structural_no_policy_learning": {
                 "aggregate": ablation_aggregate,
@@ -559,6 +634,15 @@ def _aggregate(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "peak_memory_bytes_mean": statistics.mean(run["peak_memory_bytes"] for run in group),
             "goal_completions": sum(1 for ep in all_eps if ep["success"]),
             "goal_attempts": len(all_eps),
+            "try_key_brier_mean": statistics.mean(
+                r["try_key_brier"] for r in group if r.get("try_key_brier") is not None
+            ) if any(r.get("try_key_brier") is not None for r in group) else None,
+            "paired_direct_action_changes_mean": statistics.mean(
+                r.get("paired_direct_action_changes", 0) for r in group
+            ),
+            "stored_meanings_mean": statistics.mean(
+                r.get("layer_meanings_stored", 0) for r in group
+            ),
             "actions_std": statistics.pstdev(sum(ep["actions"] for ep in run["episodes"]) for run in group),
             "improvement_e1_to_e2_std": statistics.pstdev(
                 next(ep["actions"] for ep in run["episodes"] if ep["episode_id"] == "E1_initial") - next(ep["actions"] for ep in run["episodes"] if ep["episode_id"] == "E2_similar")
