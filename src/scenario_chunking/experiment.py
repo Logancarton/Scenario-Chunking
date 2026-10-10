@@ -44,6 +44,7 @@ class ExperimentRun:
         self.learning_enabled = learning_enabled
         self.success_chunks: list[tuple[str, str]] = []  # (chunk_id, key)
         self.preference_snapshots: list[dict[str, float]] = []
+        self.recall_diagnostics: list[dict[str, Any]] = []
 
     def run(self) -> ExperimentSummary:
         results: list[EpisodeResult] = []
@@ -55,7 +56,35 @@ class ExperimentRun:
             self.preference_snapshots.append(self.learner.snapshot())
 
         recall_queries = self._build_recall_queries()
-        recall = retrieval_recall_at_k(self.router, recall_queries)
+        initial_recall = []
+        post_recall = []
+        recovered = 0
+        for query, relevant in recall_queries:
+            hits, stats = self.router.retrieve(query)
+            original = set(stats.initial_hit_ids)
+            all_hits = {h.chunk_id for h in hits}
+            initial_recall.append(len(original & relevant) / max(1, len(relevant)))
+            post_recall.append(len(all_hits & relevant) / max(1, len(relevant)))
+            recovered += len((all_hits - original) & relevant)
+            for cid in sorted(relevant):
+                score, reasons = self.router._score_chunk(chunk_id=cid, query=query)
+                self.recall_diagnostics.append({
+                    "relevant_chunk_id": cid,
+                    "query_tags": sorted(query.semantic_tags),
+                    "initial_hits": list(stats.initial_hit_ids),
+                    "spread_hits": list(stats.spread_hit_ids),
+                    "initially_missed": cid not in original,
+                    "recovered": cid not in original and cid in all_hits,
+                    "still_missed": cid not in all_hits,
+                    "relevant_score": score,
+                    "scoring_reasons": reasons,
+                    "direct_neighbors": [
+                        {"chunk_id": nid, "relation": kind, "evidence": ev}
+                        for nid, kind, ev, _ in self.memory.neighbors(cid)
+                    ],
+                })
+        recall = sum(initial_recall) / len(initial_recall) if initial_recall else 0.0
+        after_recall = sum(post_recall) / len(post_recall) if post_recall else 0.0
         temporal_accuracy = self._temporal_order_accuracy()
         delayed_credit = next((r.credit_accuracy for r in results if r.episode_id == "E5_delayed_feedback"), None) or 0.0
         return ExperimentSummary(
@@ -66,6 +95,10 @@ class ExperimentRun:
             temporal_order_accuracy=temporal_accuracy,
             delayed_credit_accuracy=delayed_credit,
             recency_negative_control_passed=None,
+            recall_with_spreading=after_recall,
+            recovered_relevant_memories=recovered,
+            spread_action_changes=sum(int(step.get("spread_changed_action", False)) for ep in results for step in ep.trace),
+            spread_action_score_influences=sum(int(step.get("spread_changed_score", False)) for ep in results for step in ep.trace),
         )
 
     def _run_episode(self, spec) -> EpisodeResult:
@@ -103,7 +136,14 @@ class ExperimentRun:
             actions = state.candidate_actions()
             if not actions:
                 break
+            original_decision = None
+            if self.mode == RetrievalMode.SPREADING:
+                rng_snapshot = self.rng.getstate()
+                original_decision = self.selector.select(state, actions, hits[: self.router.top_k])
+                self.rng.setstate(rng_snapshot)
             decision = self.selector.select(state, actions, hits)
+            spread_changed_action = bool(original_decision and original_decision.action != decision.action)
+            spread_changed_score = bool(original_decision and abs(original_decision.score - decision.score) > 1e-9)
             action = decision.action
             before_features = state.action_features(action)
             repeated_now = action_counts.get(action.label, 0) > 0
@@ -147,6 +187,13 @@ class ExperimentRun:
                 salience=salience,
                 validity_tags=frozenset({f"contradicts:{k}" for k in state.contradicted_keys}),
             )
+            if action_succeeded:
+                for entry in self.learner.credit_log:
+                    if entry.get("cause_event_id") != action_event.event_id or entry.get("kind") != "informative_predecessor":
+                        continue
+                    previous_id = self.memory.event_to_chunk.get(str(entry["credited_event_id"]))
+                    if previous_id:
+                        self.memory.link_causal(previous_id, chunk.chunk_id, evidence="observed", confidence=0.90)
             if action_succeeded and action.key_name:
                 self.success_chunks.append((chunk.chunk_id, action.key_name))
 
@@ -158,6 +205,15 @@ class ExperimentRun:
                 "predicted_success": round(decision.predicted_success, 5),
                 "selection_reasons": decision.reasons,
                 "retrieved_chunks": [{"id": h.chunk_id, "score": round(h.score, 5), "reasons": h.reasons} for h in hits],
+                "initially_activated": list(stats.initial_hit_ids),
+                "spread_activated": list(stats.spread_hit_ids),
+                "spread_justifications": dict(stats.spread_justifications),
+                "spread_detailed_events": stats.spread_detailed_events,
+                "neighbor_headers_examined": stats.neighbor_headers_examined,
+                "spread_budget_exhausted": stats.budget_exhausted,
+                "counterfactual_initial_action": original_decision.action.label if original_decision else None,
+                "spread_changed_action": spread_changed_action,
+                "spread_changed_score": spread_changed_score,
                 "signals": [s.content for s in signals],
                 "candidate_key": state.candidate_key,
                 "contradicted_keys": sorted(state.contradicted_keys),
@@ -356,6 +412,7 @@ def run_experiments(
             raw["learned_weights"] = run.learner.snapshot()
             raw["preference_snapshots"] = run.preference_snapshots
             raw["sparse_miss_cases"] = run.sparse_miss_cases()
+        raw["recall_diagnostics"] = run.recall_diagnostics
             summaries.append(raw)
             with traces_path.open("a", encoding="utf-8") as fh:
                 for episode in summary.episodes:
@@ -372,7 +429,27 @@ def run_experiments(
         raw["learned_weights"] = run.learner.snapshot()
         raw["preference_snapshots"] = run.preference_snapshots
         raw["sparse_miss_cases"] = run.sparse_miss_cases()
+            raw["recall_diagnostics"] = run.recall_diagnostics
         ablation_runs.append(raw)
+
+    for seed in seeds:
+        tracemalloc.start()
+        run = ExperimentRun(RetrievalMode.STRUCTURAL, seed, top_k=8, distractor_count=distractor_count)
+        summary = run.run()
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        raw = asdict(summary)
+        raw["mode"] = "structural_topk8"
+        raw["peak_memory_bytes"] = peak
+        raw["learned_weights"] = run.learner.snapshot()
+        raw["preference_snapshots"] = run.preference_snapshots
+        raw["sparse_miss_cases"] = run.sparse_miss_cases()
+        raw["recall_diagnostics"] = run.recall_diagnostics
+        summaries.append(raw)
+        with traces_path.open("a", encoding="utf-8") as fh:
+            for episode in summary.episodes:
+                for entry in episode.trace:
+                    fh.write(json.dumps({"mode": "structural_topk8", "seed": seed, "episode": episode.episode_id, **entry}, sort_keys=True) + "\n")
 
     aggregate = _aggregate(summaries)
     ablation_aggregate = _aggregate(ablation_runs).get("structural_no_policy_learning", {})
@@ -380,6 +457,7 @@ def run_experiments(
         "seeds": list(seeds),
         "distractor_count": distractor_count,
         "recency_negative_control": recency_control,
+        "neighbor_budget": {"max_additional_chunks": 2, "max_neighbor_headers": 18, "max_total_detail_events": 36, "max_hops": 1},
         "runs": summaries,
         "aggregate": aggregate,
         "ablations": {
@@ -419,6 +497,12 @@ def _aggregate(runs: list[dict[str, Any]]) -> dict[str, Any]:
                 for run in group
             ),
             "retrieval_recall_at_k_mean": statistics.mean(run["retrieval_recall_at_k"] for run in group),
+            "recall_after_spreading_mean": statistics.mean(run["recall_with_spreading"] for run in group),
+            "recovered_relevant_memories_mean": statistics.mean(run["recovered_relevant_memories"] for run in group),
+            "spread_action_changes_mean": statistics.mean(run["spread_action_changes"] for run in group),
+            "spread_action_score_influences_mean": statistics.mean(run["spread_action_score_influences"] for run in group),
+            "spread_details_mean": statistics.mean(sum(ep["retrieval_stats"]["spread_detailed_events"] for ep in run["episodes"]) for run in group),
+            "neighbor_headers_mean": statistics.mean(sum(ep["retrieval_stats"]["neighbor_headers_examined"] for ep in run["episodes"]) for run in group),
             "temporal_order_accuracy_mean": statistics.mean(run["temporal_order_accuracy"] for run in group),
             "delayed_credit_accuracy_mean": statistics.mean(run["delayed_credit_accuracy"] for run in group),
             "outdated_retrievals_mean": statistics.mean(sum(ep["outdated_retrievals"] for ep in run["episodes"]) for run in group),

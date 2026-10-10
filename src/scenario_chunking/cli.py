@@ -11,7 +11,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Scenario-Chunking cognitive architecture experiment.")
     parser.add_argument("--output", default="results", help="Directory for results.json, traces, and dashboard.html")
     parser.add_argument("--seeds", default="7,23,61,101,149", help="Comma-separated deterministic seeds")
-    parser.add_argument("--modes", default="full,chunked,recency,structural", help="Comma-separated retrieval modes")
+    parser.add_argument("--modes", default="full,chunked,recency,structural,spreading", help="Comma-separated retrieval modes")
     parser.add_argument("--distractors", type=int, default=1000, help="Distractor chunks inserted before Episode 4")
     args = parser.parse_args()
 
@@ -23,7 +23,7 @@ def main() -> None:
         print(
             f"{mode:10s} completion={metrics['completion_rate_mean']:.2f} "
             f"actions={metrics['actions_mean']:.1f} recall@K={metrics['retrieval_recall_at_k_mean']:.2f} "
-            f"detail_events={metrics['active_detail_events_mean']:.0f}"
+            f"post_recall={metrics['recall_after_spreading_mean']:.2f} " f"detail_events={metrics['active_detail_events_mean']:.0f}"
         )
 
 

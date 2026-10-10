@@ -5,15 +5,20 @@ from time import perf_counter
 
 from .memory import EpisodicMemory
 from .models import EventKind, RetrievalHit, RetrievalMode, RetrievalQuery, RetrievalStats
+from .spreading import BoundedNeighborActivator, SpreadBudget
 
 
 class MemoryRouter:
     """Retrieves episodic chunks using one of the experiment's controlled routing strategies."""
 
-    def __init__(self, memory: EpisodicMemory, mode: RetrievalMode, *, top_k: int = 6) -> None:
+    def __init__(
+        self, memory: EpisodicMemory, mode: RetrievalMode, *,
+        top_k: int = 6, spread_budget: SpreadBudget | None = None,
+    ) -> None:
         self.memory = memory
         self.mode = mode
         self.top_k = top_k
+        self.spreader = BoundedNeighborActivator(memory, spread_budget) if mode == RetrievalMode.SPREADING else None
 
     def retrieve(self, query: RetrievalQuery) -> tuple[list[RetrievalHit], RetrievalStats]:
         started = perf_counter()
@@ -35,6 +40,7 @@ class MemoryRouter:
 
         scored.sort(key=lambda h: (-h.score, h.chunk_id))
         hits = scored[: self.top_k]
+        stats.initial_hit_ids = [h.chunk_id for h in hits]
         query_non_goal = {tag for tag in query.semantic_tags if not tag.startswith("goal:")}
         for hit in hits:
             events = self.memory.chunk_events(hit.chunk_id)
@@ -56,6 +62,12 @@ class MemoryRouter:
                 and not (query_non_goal & {tag for tag in self.memory.chunks[cid].semantic_tags if not tag.startswith("goal:")})
             )
 
+        if self.spreader is not None:
+            extra = self.spreader.expand(
+                query, hits, stats,
+                rank_header=lambda cid, q: self._score_chunk(chunk_id=cid, query=q),
+            )
+            hits = hits + extra
         stats.latency_ms = (perf_counter() - started) * 1000.0
         return hits, stats
 
@@ -85,7 +97,7 @@ class MemoryRouter:
             score = 0.45 * score + 0.55 * recency
             reasons.append(f"fixed_recency={recency:.3f}")
 
-        if self.mode == RetrievalMode.STRUCTURAL:
+        if self.mode in (RetrievalMode.STRUCTURAL, RetrievalMode.SPREADING):
             # Time remains factual structure. We use it to identify contradictions and sequence
             # relationships, not to assume that newer is universally more useful.
             contradiction_penalty = 0.0

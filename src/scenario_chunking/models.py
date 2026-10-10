@@ -24,6 +24,7 @@ class RetrievalMode(str, Enum):
     CHUNKED = "chunked"
     RECENCY = "recency"
     STRUCTURAL = "structural"
+    SPREADING = "spreading"
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,12 @@ class RetrievalStats:
     latency_ms: float = 0.0
     active_detail_events: int = 0
     unnecessary_activations: int = 0
+    initial_hit_ids: list[str] = field(default_factory=list)
+    spread_hit_ids: list[str] = field(default_factory=list)
+    spread_justifications: dict[str, str] = field(default_factory=dict)
+    spread_detailed_events: int = 0
+    neighbor_headers_examined: int = 0
+    budget_exhausted: bool = False
 
     def __iadd__(self, other: "RetrievalStats") -> "RetrievalStats":
         self.total_chunks += other.total_chunks
@@ -136,6 +143,9 @@ class RetrievalStats:
         self.latency_ms += other.latency_ms
         self.active_detail_events += other.active_detail_events
         self.unnecessary_activations += other.unnecessary_activations
+        self.spread_detailed_events += other.spread_detailed_events
+        self.neighbor_headers_examined += other.neighbor_headers_examined
+        self.budget_exhausted = self.budget_exhausted or other.budget_exhausted
         return self
 
 
@@ -186,6 +196,10 @@ class ExperimentSummary:
     temporal_order_accuracy: float
     delayed_credit_accuracy: float
     recency_negative_control_passed: bool | None = None
+    recall_with_spreading: float = 0.0
+    recovered_relevant_memories: int = 0
+    spread_action_changes: int = 0
+    spread_action_score_influences: int = 0
 
     @property
     def completion_rate(self) -> float:

@@ -1,0 +1,50 @@
+name: Scenario Chunking research gate
+
+on:
+  push:
+    branches: ["experiment/bounded-causal-spreading", "main"]
+  workflow_dispatch:
+
+jobs:
+  research-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Focused behavioral tests
+        run: python -m pytest -q tests/test_spreading.py
+      - name: Full suite
+        run: python -m pytest -q
+      - name: Compilation
+        run: python -m compileall -q src tests
+      - name: Diff integrity
+        run: git diff --check HEAD^ HEAD
+      - name: Run independent benchmark (5 seeds; 1000 distractors)
+        run: scenario-chunking --output results
+      - name: Verify measurement payload
+        run: |
+          python - <<'PY'
+          import json
+          d = json.load(open("results/results.json"))
+          for key in ("structural", "structural_topk8", "spreading"):
+              assert key in d["aggregate"], f"missing {key}"
+          assert len(d["seeds"]) == 5
+          assert d["neighbor_budget"]["max_hops"] == 1
+          assert all("initially_activated" in entry for r in d["runs"]
+                     for ep in r["episodes"] for entry in ep["trace"])
+          print(json.dumps({k: d["aggregate"][k] for k in
+                            ("structural", "structural_topk8", "spreading")}, indent=2))
+          PY
+      - name: Upload measured results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-spreading-research
+          path: results/
+          if-no-files-found: ignore

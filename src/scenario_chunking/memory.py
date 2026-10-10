@@ -17,6 +17,10 @@ class EpisodicMemory:
         self.tag_index: dict[str, set[str]] = defaultdict(set)
         self.person_index: dict[str, set[str]] = defaultdict(set)
         self.episode_index: dict[str, list[str]] = defaultdict(list)
+        self.event_to_chunk: dict[str, str] = {}
+        # Directed explanatory links, separate from chronological links.
+        # Stored with provenance; a hypothesized edge is not an observed cause.
+        self.causal_links: dict[str, dict[str, tuple[str, float]]] = defaultdict(dict)
         self._event_ids = count(1)
         self._chunk_ids = count(1)
 
@@ -73,6 +77,12 @@ class EpisodicMemory:
             validity_tags=validity_tags,
         )
         self.chunks[chunk_id] = chunk
+        for event in events:
+            if event.cause_event_id:
+                source_chunk = self.event_to_chunk.get(event.cause_event_id)
+                if source_chunk and source_chunk != chunk_id:
+                    self.link_causal(source_chunk, chunk_id, evidence="observed", confidence=event.confidence)
+            self.event_to_chunk[event.event_id] = chunk_id
         self.chunk_order.append(chunk_id)
         self.episode_index[first.episode_id].append(chunk_id)
         self.goal_index[first.goal_id].add(chunk_id)
@@ -91,6 +101,31 @@ class EpisodicMemory:
         current = header.activation_at(now)
         header.activation_strength = min(3.0, current + boost)
         header.activation_last_time = now
+
+    def link_causal(self, source_chunk_id: str, effect_chunk_id: str, *, evidence: str, confidence: float) -> None:
+        """Connect a confirmed or proposed cause; only observed causes can earn strong spreading priority."""
+        if source_chunk_id == effect_chunk_id:
+            return
+        if source_chunk_id not in self.chunks or effect_chunk_id not in self.chunks:
+            raise KeyError("a causal link requires two stored chunks")
+        if evidence not in ("observed", "hypothesis", "contradicted"):
+            raise ValueError("unknown evidence provenance")
+        if not 0 <= confidence <= 1:
+            raise ValueError("confidence outside [0, 1]")
+        self.causal_links[source_chunk_id][effect_chunk_id] = (evidence, confidence)
+        self.causal_links[effect_chunk_id][source_chunk_id] = (evidence, confidence)
+
+    def neighbors(self, chunk_id: str) -> list[tuple[str, str, str, float]]:
+        """Return only directly linked chunk headers, never full episode scans."""
+        header = self.chunks[chunk_id].header
+        nearby: list[tuple[str, str, str, float]] = []
+        if header.previous_chunk_id:
+            nearby.append((header.previous_chunk_id, "predecessor", "observed", 1.0))
+        if header.next_chunk_id:
+            nearby.append((header.next_chunk_id, "successor", "observed", 1.0))
+        for neighbor, (evidence, confidence) in sorted(self.causal_links.get(chunk_id, {}).items()):
+            nearby.append((neighbor, "causal", evidence, confidence))
+        return nearby
 
     def chunk_events(self, chunk_id: str) -> list[Event]:
         return [self.events[eid] for eid in self.chunks[chunk_id].event_ids]

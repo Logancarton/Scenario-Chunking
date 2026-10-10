@@ -113,3 +113,73 @@ Header evaluations, detail loads, and active detailed-event volume are **archite
 A useful result would show that feedback changes future action preferences, later episodes require fewer or better-targeted actions, structural time avoids blindly treating historical success as current truth, delayed outcomes credit the causal attempt, and sparse routing keeps detailed-memory activation far below full retrieval under distractor load.
 
 It would **not** establish consciousness, general intelligence, or biological equivalence. It would only support or falsify specific architectural hypotheses worth carrying into Sonara.
+
+
+## Bounded one-hop causal-neighbor experiment
+
+The 2026-10-10 archived baseline reports **two sparse-retrieval misses**: seed 7 missed
+the E5 success chunk `c001020` while selecting its predecessor `c001019`;
+seed 149 missed E5 success chunk `c001016` while selecting its predecessor
+`c001015`. These are **ranking/top-K displacement**, not candidate-index misses:
+all chunks share the task goal and were eligible for candidate routing.
+The structural score awards 0.18 to a chunk with a successful successor and a
+working-memory activation bonus; consequently a predecessor can outrank the
+relevant terminal success chunk. Full retrieval ranked each relevant success
+at the top, while structural top-6 omitted it. The new mechanism must be
+evaluated against these exact documented failures but contains **no seed,
+key, chunk ID, or correct-trajectory special cases**.
+
+### Mechanism
+
+The unchanged sparse top-K runs first. Only the resulting chunk IDs are seeds
+for a **one-hop** inspection of directly linked predecessor, successor, or
+observed-causal neighbors. An observed cross-chunk causal edge can be recorded
+after the environment confirms causal feedback or the learner credits an
+informative predecessor. Hypotheses and contradicted edges are retained as
+historical claims but do **not** qualify as strong causal evidence.
+
+The independent spreading owner ranks neighbors using goal match, semantic
+overlap, positive evidence consistency, provenance, and link type. It does not
+apply a universal recency preference. Its default per-retrieval caps are
+**two additional chunks, 18 neighbor headers, 36 detailed events in total
+(including the original top-K), and one hop**. Neighbor chunks never become
+new seeds, preventing chain reaction through long sequences. Historical
+timestamps are unchanged by activation.
+
+This experiment compares:
+- Original structural top-6 (no spreading).
+- Structural top-8 (larger retrieval-window control).
+- Structural top-6 plus bounded one-hop neighbor activation.
+
+All use the same six environment episodes, random seeds, feedback learner,
+and action-selection rules. The initial top-K recall and recall after spreading
+are separate metrics. Every trace records initial activations, additional
+activations and evidence justification, budget use, the actual selected action,
+and whether that action differs from a same-random-state top-K-only
+counterfactual. This is a **selection influence** check, not itself evidence
+of behavioral *improvement*. The benchmark also compares completed goals,
+action counts, repeated/failed actions, measured latency, and detailed-event
+processing proxies.
+
+### Adversarial tests
+
+Focused tests include false causal links with only hypothetical provenance,
+cross-goal neighbors, contradicted/outdated successes, long high-degree
+distractor chains, a detail-budget exhaustion case, and an action-selection
+counterfactual with distinct keys. Test and benchmark failures must remain
+visible rather than being hidden or automatically tuned away.
+
+The GitHub research gate runs focused tests, full tests, compilation,
+`git diff --check`, and five-seed/1,000-distractor benchmark runs, and
+uploads the generated HTML, JSON and trace artifacts. Recorded outcomes,
+including negative results, are added below only after actual execution.
+
+### Result interpretation
+
+Memory recovery alone is **not** cognitive improvement. A valid claim
+requires improvement in completed goals or decisions/action efficiency on
+matched seeds while retaining most of the detailed-memory saving.
+An unchanged completion rate with fewer retrieved misses but no better
+actions supports a *retrieval improvement only*. The prior baseline
+experiment achieved 30/30 successful tasks across the five seeds, making
+**action efficiency** a more sensitive behavioral metric than raw completion.
