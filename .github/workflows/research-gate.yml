@@ -139,6 +139,19 @@ jobs:
               assert all(0 <= v["completion_rate"] <= 1 for v in modes.values())
               print("HELDOUT_CASE " + case + " " + json.dumps(modes, sort_keys=True))
           PY
+      - name: Run five-seed held-out cognition challenge
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from scenario_chunking.experiment import run_heldout_refinement_benchmark
+          results = run_heldout_refinement_benchmark()
+          assert len(results["seeds"]) == 5 and len(results["trials"]) == 125
+          Path("results-refinement/heldout_refinement_5seed.json").write_text(
+              json.dumps(results, indent=2, sort_keys=True), encoding="utf-8")
+          for condition, values in results["summary"].items():
+              print("HELDOUT_5SEED " + condition + " " + json.dumps(values, sort_keys=True))
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
