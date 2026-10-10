@@ -10,15 +10,18 @@ class ActionTrace:
     features: frozenset[str]
     informative: bool = False
     resolved: bool = False
+    produced_evidence_ids: frozenset[str] = frozenset()
+    used_evidence_ids: frozenset[str] = frozenset()
 
 
 class OutcomeLearner:
     """Transparent linear policy learner with causal and eligibility-trace credit assignment."""
 
-    def __init__(self, *, learning_rate: float = 0.32, gamma: float = 0.72, enabled: bool = True) -> None:
+    def __init__(self, *, learning_rate: float = 0.32, gamma: float = 0.72, enabled: bool = True, strict_credit: bool = False) -> None:
         self.learning_rate = learning_rate
         self.enabled = enabled
         self.gamma = gamma
+        self.strict_credit = strict_credit
         self.weights: dict[str, float] = defaultdict(float)
         self.episode_trace: list[ActionTrace] = []
         self.credit_log: list[dict[str, object]] = []
@@ -34,13 +37,18 @@ class OutcomeLearner:
     def begin_episode(self) -> None:
         self.episode_trace = []
 
-    def register_action(self, event_id: str, features: frozenset[str]) -> None:
-        self.episode_trace.append(ActionTrace(event_id=event_id, features=features))
+    def register_action(self, event_id: str, features: frozenset[str], *,
+                        used_evidence_ids=()) -> None:
+        self.episode_trace.append(ActionTrace(
+            event_id=event_id, features=features,
+            used_evidence_ids=frozenset(used_evidence_ids),
+        ))
 
-    def mark_informative(self, event_id: str) -> None:
+    def mark_informative(self, event_id: str, *, produced_evidence_ids=()) -> None:
         for item in reversed(self.episode_trace):
             if item.event_id == event_id:
                 item.informative = True
+                item.produced_evidence_ids = frozenset(produced_evidence_ids)
                 return
 
     def expected_utility(self, features: frozenset[str]) -> float:
@@ -70,14 +78,25 @@ class OutcomeLearner:
         cause.resolved = True
         self.credit_log.append({"cause_event_id": cause_event_id, "credited_event_id": cause_event_id, "credit": reward, "kind": "causal_success"})
 
-        # Earlier informative actions are eligible because they changed the belief state used by the success.
+        # Old policy remains a frozen historical comparison. In refinement mode,
+        # only an observation demonstrably USED in the selected interpretation
+        # makes its producing information action eligible. Temporal order alone
+        # is insufficient; no observed causal memory edge is implied by this credit.
         distance = 1
         for item in reversed(self.episode_trace[:cause_index]):
-            if item.informative:
-                credit = reward * (self.gamma ** distance)
-                self._update(item.features, credit)
-                self.credit_log.append({"cause_event_id": cause_event_id, "credited_event_id": item.event_id, "credit": credit, "kind": "informative_predecessor"})
-                distance += 1
+            if not item.informative:
+                continue
+            if self.strict_credit and not (item.produced_evidence_ids & cause.used_evidence_ids):
+                continue
+            credit = reward * (self.gamma ** distance)
+            self._update(item.features, credit)
+            self.credit_log.append({
+                "cause_event_id": cause_event_id, "credited_event_id": item.event_id,
+                "source_evidence_ids": sorted(item.produced_evidence_ids & cause.used_evidence_ids),
+                "credit": credit,
+                "kind": "evidence_supported_predecessor" if self.strict_credit else "informative_predecessor",
+            })
+            distance += 1
 
     def _update(self, features: frozenset[str], reward: float) -> None:
         if not self.enabled:

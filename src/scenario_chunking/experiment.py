@@ -42,7 +42,7 @@ class ExperimentRun:
         self.seed = seed
         self.rng = random.Random(seed)
         self.memory = EpisodicMemory()
-        self.learner = OutcomeLearner(enabled=learning_enabled)
+        self.learner = OutcomeLearner(enabled=learning_enabled, strict_credit=bool(refinement_mode))
         self.environment = LockedWorkshop(seed)
         self.router = MemoryRouter(self.memory, mode, top_k=top_k)
         self.refiner = (ProgressiveRefiner(self.learner, learning=refinement_mode == 'learned')
@@ -145,7 +145,7 @@ class ExperimentRun:
         for signal in initial:
             event = self._event_from_signal(signal, state, step=0)
             init_events.append(event)
-            state.apply_signal(signal)
+            state.apply_signal(signal, event_id=event.event_id)
             if event.kind in (EventKind.OBSERVATION, EventKind.OUTCOME):
                 state.observed_evidence_ids.append(event.event_id)
         state.current_time = self.clock
@@ -229,21 +229,28 @@ class ExperimentRun:
 
             prediction = self._prediction_event(state, step, decision)
             action_event = self._action_event(state, step, action, before_features)
-            self.learner.register_action(action_event.event_id, before_features)
+            used_evidence = (tuple(decision.thought_trace.get("contributing_evidence_ids", ()))
+                             if decision.thought_trace else ())
+            self.learner.register_action(
+                action_event.event_id, before_features,
+                used_evidence_ids=used_evidence,
+            )
             signals = self.environment.step(action, cause_event_id=action_event.event_id)
 
             outcome_events: list[Event] = []
             action_informative = False
+            produced_evidence_ids: list[str] = []
             action_failed = False
             action_succeeded = False
             for signal in signals:
                 event = self._event_from_signal(signal, state, step)
                 outcome_events.append(event)
-                state.apply_signal(signal)
+                state.apply_signal(signal, event_id=event.event_id)
                 if event.kind in (EventKind.OBSERVATION, EventKind.OUTCOME):
                     state.observed_evidence_ids.append(event.event_id)
                 if signal.informative and signal.kind == EventKind.OBSERVATION:
                     action_informative = True
+                    produced_evidence_ids.append(event.event_id)
                 if signal.outcome == "failure":
                     failed += 1
                     action_failed = True
@@ -259,7 +266,7 @@ class ExperimentRun:
                     outcome_event_ids=tuple(e.event_id for e in outcome_events if e.kind == EventKind.OUTCOME),
                 )
             if action_informative:
-                self.learner.mark_informative(action_event.event_id)
+                self.learner.mark_informative(action_event.event_id, produced_evidence_ids=produced_evidence_ids)
             if not action_informative and not action_succeeded:
                 unnecessary += 1
             if self.meaning_mode and decision.meaning_frame is not None:
@@ -281,7 +288,7 @@ class ExperimentRun:
                 salience=salience,
                 validity_tags=frozenset({f"contradicts:{k}" for k in state.contradicted_keys}),
             )
-            if action_succeeded:
+            if action_succeeded and not self.learner.strict_credit:
                 for entry in self.learner.credit_log:
                     if entry.get("cause_event_id") != action_event.event_id or entry.get("kind") != "informative_predecessor":
                         continue
@@ -318,6 +325,8 @@ class ExperimentRun:
                 "learner_weights": self.learner.snapshot(),
                 "meaning": decision.meaning_frame.trace() if decision.meaning_frame else None,
                 "thought": decision.thought_trace,
+                "used_evidence_ids": list(used_evidence),
+                "produced_evidence_ids": produced_evidence_ids,
                 "reinstated_chunks": list(stats.reinstated_hit_ids),
                 "reinstatement_headers_examined": stats.reinstatement_headers_examined,
                 "reinstatement_detail_events": stats.reinstatement_detail_events,
