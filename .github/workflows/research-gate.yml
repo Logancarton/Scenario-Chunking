@@ -38,6 +38,13 @@ jobs:
           assert d["neighbor_budget"]["max_hops"] == 1
           assert all("initially_activated" in entry for r in d["runs"]
                      for ep in r["episodes"] for entry in ep["trace"])
+          reference_misses = [
+              {"seed": r["seed"], **item}
+              for r in d["runs"] if r["mode"] == "structural"
+              for item in r.get("same_snapshot_recovery_audit", [])
+              if item["baseline_missed"]
+          ]
+          print("SAME_SNAPSHOT_MISSES=" + json.dumps(reference_misses, sort_keys=True))
           print(json.dumps({k: d["aggregate"][k] for k in
                             ("structural", "structural_topk8", "spreading")}, indent=2))
           PY
