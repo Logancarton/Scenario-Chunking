@@ -19,6 +19,8 @@ class EpisodeSpec:
     clue_text: str
     changed_from_key: str | None = None
     delayed_feedback_events: int = 0
+    reported_key: str | None = None
+    report_confidence: float | None = None
 
 
 class LockedWorkshop:
@@ -72,8 +74,9 @@ class LockedWorkshop:
         if action.kind == "inspect_storage":
             self.drawer_seen = True
             if spec.clue_source == "storage":
-                tags = {"role:storage", "clue:key_relation", f"key:{spec.correct_key}"}
-                metadata = {"inspected": spec.storage_name, "candidate_key": spec.correct_key}
+                reported_key = spec.reported_key or spec.correct_key
+                tags = {"role:storage", "clue:key_relation", f"key:{reported_key}"}
+                metadata = {"inspected": spec.storage_name, "candidate_key": reported_key}
                 if spec.changed_from_key:
                     tags.add(f"contradicts_key:{spec.changed_from_key}")
                     metadata["contradicts_key"] = spec.changed_from_key
@@ -83,7 +86,7 @@ class LockedWorkshop:
                     content=spec.clue_text,
                     semantic_tags=frozenset(tags),
                     informative=True,
-                    confidence=0.96,
+                    confidence=spec.report_confidence if spec.report_confidence is not None else 0.96,
                     metadata=metadata,
                 )]
             return [EnvironmentSignal(
@@ -98,14 +101,15 @@ class LockedWorkshop:
         if action.kind == "inspect_work_surface":
             self.bench_seen = True
             if spec.clue_source == "work_surface":
+                reported_key = spec.reported_key or spec.correct_key
                 return [EnvironmentSignal(
                     kind=EventKind.OBSERVATION,
                     truth_status=TruthStatus.FACT,
                     content=spec.clue_text,
-                    semantic_tags=frozenset({"role:work_surface", "clue:key_relation", f"key:{spec.correct_key}"}),
+                    semantic_tags=frozenset({"role:work_surface", "clue:key_relation", f"key:{reported_key}"}),
                     informative=True,
-                    confidence=0.92,
-                    metadata={"inspected": spec.work_surface_name, "candidate_key": spec.correct_key},
+                    confidence=spec.report_confidence if spec.report_confidence is not None else 0.92,
+                    metadata={"inspected": spec.work_surface_name, "candidate_key": reported_key},
                 )]
             return [EnvironmentSignal(
                 kind=EventKind.OBSERVATION,
@@ -130,8 +134,9 @@ class LockedWorkshop:
         if action.kind == "ask_informant":
             self.person_asked = True
             if spec.clue_source == "person":
-                tags = {"role:informant", "clue:key_relation", f"key:{spec.correct_key}"}
-                metadata = {"asked_person": spec.person_name, "candidate_key": spec.correct_key}
+                reported_key = spec.reported_key or spec.correct_key
+                tags = {"role:informant", "clue:key_relation", f"key:{reported_key}"}
+                metadata = {"asked_person": spec.person_name, "candidate_key": reported_key}
                 if spec.changed_from_key:
                     tags.add(f"contradicts_key:{spec.changed_from_key}")
                     metadata["contradicts_key"] = spec.changed_from_key
@@ -142,7 +147,7 @@ class LockedWorkshop:
                     content=spec.clue_text,
                     semantic_tags=frozenset(tags),
                     informative=True,
-                    confidence=0.94,
+                    confidence=spec.report_confidence if spec.report_confidence is not None else 0.94,
                     metadata=metadata,
                 )]
             return [EnvironmentSignal(

@@ -235,6 +235,7 @@ class ProgressiveRefiner:
         hypotheses_record = tuple({
             "claim": h["claim"], "action": h["action"],
             "supports": list(h["supports"]), "contradicts": list(h["contradicts"]),
+            "sources": list(h["sources"]),
             "confidence": h["confidence"], "provenance": list(h["provenance"]),
         } for h in hypotheses)
         predictions = tuple((h["action"], h["confidence"]) for h in hypotheses)

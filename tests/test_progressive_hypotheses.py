@@ -159,3 +159,39 @@ def test_strict_credit_excludes_irrelevant_informative_predecessors():
     learner.register_action("lucky-action", frozenset({"action:try_key"}))
     learner.apply_success("lucky-action")
     assert not any(x["kind"] == "evidence_supported_predecessor" for x in learner.credit_log)
+
+
+def test_live_experiment_path_uses_reported_evidence_not_hidden_correct_key():
+    """Unfamiliar clue reliability reaches the real runtime and hypothesis owner."""
+    from scenario_chunking.experiment import ExperimentRun
+    from scenario_chunking.models import RetrievalMode
+
+    spec = EpisodeSpec(
+        episode_id="heldout_live",
+        container_name="unfamiliar-lock", storage_name="parts drawer",
+        work_surface_name="shelf", person_name="Dana",
+        keys=("copper", "silver"), correct_key="silver",
+        clue_source="storage", clue_text="Faint pencil mark suggests copper.",
+        reported_key="copper", report_confidence=0.22,
+    )
+    outcomes = {}
+    for mode in (None, "associate"):
+        run = ExperimentRun(RetrievalMode.STRUCTURAL, 7, distractor_count=0,
+                            refinement_mode=mode)
+        _causal_chunk(run.memory, target="unfamiliar-lock", key="silver")
+        episode = run._run_episode(spec)
+        outcomes[mode or "structural"] = episode
+        assert episode.trace
+        assert all(step["interpretation_event_evaluations"]
+                   <= step["total_detailed_events_this_retrieval"]
+                   for step in episode.trace)
+        if mode:
+            assert any(step["thought"] and step["thought"]["hypotheses"]
+                       for step in episode.trace)
+            assert all(step["total_detailed_events_this_retrieval"] <= 36
+                       for step in episode.trace)
+    assert outcomes["associate"].success
+    assert outcomes["structural"].success
+    # Measure actual action efficiency rather than assuming that a changed
+    # thought improved it: no hard assertion that refinement must win.
+    assert outcomes["associate"].actions <= 14
