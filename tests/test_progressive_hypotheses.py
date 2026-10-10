@@ -195,3 +195,25 @@ def test_live_experiment_path_uses_reported_evidence_not_hidden_correct_key():
     # Measure actual action efficiency rather than assuming that a changed
     # thought improved it: no hard assertion that refinement must win.
     assert outcomes["associate"].actions <= 14
+
+
+def test_irrelevant_historical_success_triggers_information_seeking():
+    """Do not reuse a key outcome from a different object as current proof."""
+    memory = EpisodicMemory()
+    unrelated = _causal_chunk(memory, target="different-lock", key="silver")
+    hits = [RetrievalHit(unrelated.chunk_id, 0.9, ["same_key_different_target"])]
+    state = CognitiveState(episode_id="unfamiliar")
+    state.container_name = "unfamiliar-lock"
+    state.visible_keys = ["silver", "copper"]
+    learner = OutcomeLearner()
+    baseline = ActionSelector(memory, learner, random.Random(3),
+                              meaning_mode="fixed").select(
+                                  state, state.candidate_actions(), hits)
+    refiner = ProgressiveRefiner(learner)
+    new = ActionSelector(memory, learner, random.Random(3),
+                         meaning_mode="fixed", refiner=refiner).select(
+                             state, state.candidate_actions(), hits, refine=True)
+    assert baseline.action.kind == "try_key"
+    assert new.action.kind != "try_key"
+    assert new.thought_trace["decision_basis"] == "reject_unverified_transfer"
+    assert new.thought_trace["meaningfully_changed_action"]
