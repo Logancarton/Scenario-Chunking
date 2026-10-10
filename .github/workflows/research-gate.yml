@@ -67,6 +67,8 @@ jobs:
                    "repeated_actions_mean", "retrieval_recall_at_k_mean",
                    "active_detail_events_mean", "retrieval_latency_ms_mean",
                    "peak_memory_bytes_mean", "try_key_brier_mean",
+                   "selection_latency_ms_mean", "interpretation_event_evaluations_mean",
+                   "total_decision_event_evaluations_mean",
                    "paired_direct_action_changes_mean", "stored_meanings_mean")
               }, sort_keys=True))
               relevant = [r for r in d["runs"] if r["mode"] == key]
