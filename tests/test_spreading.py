@@ -133,3 +133,37 @@ def test_recovered_causal_evidence_can_change_action_selection():
     with_spread = chooser_with.select(state, actions, initial + extra)
     assert without.action.key_name == "brass"
     assert with_spread.action.key_name == "steel"
+
+
+
+def test_real_six_episode_trace_identifies_each_expansion_and_honors_budget():
+    from scenario_chunking.experiment import ExperimentRun
+
+    run = ExperimentRun(RetrievalMode.SPREADING, 7, distractor_count=200)
+    summary = run.run()
+    assert len(summary.episodes) == 6
+    assert all(episode.success for episode in summary.episodes)
+    assert summary.recall_with_spreading >= summary.retrieval_recall_at_k
+    additional = 0
+    for episode in summary.episodes:
+        for step in episode.trace:
+            ids = step["spread_activated"]
+            additional += len(ids)
+            assert len(ids) <= 2
+            assert step["neighbor_headers_examined"] <= 18
+            assert step["total_detailed_events_this_retrieval"] <= 36
+            assert set(ids) == set(step["individual_spread_influence"])
+            assert not set(ids) & set(step["initially_activated"])
+    assert additional > 0
+
+
+def test_false_claim_marked_observed_remains_an_unresolved_failure_mode():
+    # The router cannot independently validate a falsely asserted "observed" edge.
+    # Document the vulnerability; do not treat a passing expectation as a safety guarantee.
+    m = EpisodicMemory()
+    seed = chunk(m, 1, {"role:key"}, episode="one")
+    false_evidence = chunk(m, 2, {"role:key", "key:silver", "outcome:success"},
+                           episode="two", outcome="success")
+    m.link_causal(seed.chunk_id, false_evidence.chunk_id, evidence="observed", confidence=1.0)
+    hits, _ = direct_expand(m, seed, query("role:key", "key:silver", "outcome:success"))
+    assert false_evidence.chunk_id in [hit.chunk_id for hit in hits]
