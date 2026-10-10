@@ -567,9 +567,16 @@ def run_heldout_refinement_benchmark(
                                                    for step in steps),
                     "revisions": sum(bool(step.get("thought") and step["thought"]["changed"])
                                      for step in steps),
+                    "improving_revisions": sum(bool(step.get("refinement_changed_action")
+                                                     and step["success"]) for step in steps),
+                    "failed_revision_actions": sum(bool(step.get("refinement_changed_action")
+                                                       and step["action"].startswith("try_key:")
+                                                       and not step["success"]) for step in steps),
                     "reasoning_cycles": sum(int(step["thought"]["reasoning_cycles"])
                                             for step in steps if step.get("thought")),
                     "detail_events": episode.retrieval_stats.active_detail_events,
+                    "retrieval_latency_ms": episode.retrieval_stats.latency_ms,
+                    "selection_latency_ms": sum(step["selection_latency_ms"] for step in steps),
                     "interpretation_event_evaluations": sum(
                         step["interpretation_event_evaluations"] for step in steps),
                     "reinstated_details": episode.retrieval_stats.reinstatement_detail_events,
@@ -589,6 +596,15 @@ def run_heldout_refinement_benchmark(
                 "mean_revisions": statistics.mean(t["revisions"] for t in rows),
                 "mean_refinement_action_changes": statistics.mean(
                     t["revision_action_changes"] for t in rows),
+                "mean_successful_revision_actions": statistics.mean(
+                    t["improving_revisions"] for t in rows),
+                "mean_failed_revision_actions": statistics.mean(
+                    t["failed_revision_actions"] for t in rows),
+                "mean_brier": statistics.mean(
+                    t["mean_try_key_brier"] for t in rows
+                    if t["mean_try_key_brier"] is not None),
+                "mean_selection_ms": statistics.mean(t["selection_latency_ms"] for t in rows),
+                "mean_retrieval_ms": statistics.mean(t["retrieval_latency_ms"] for t in rows),
                 "mean_detail_events": statistics.mean(t["detail_events"] for t in rows),
             }
     return {

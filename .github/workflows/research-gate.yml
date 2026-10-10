@@ -121,6 +121,24 @@ jobs:
               for mode in ("structural", "refinement_refine", "refinement_associate", "refinement_learned")
           }, sort_keys=True))
           PY
+      - name: Verify independent held-out reasoning cases
+        run: |
+          python - <<'PY'
+          import json
+          d = json.load(open("results-refinement/heldout_refinement.json"))
+          assert len(d["seeds"]) == 1
+          assert set(d["conditions"]) == {
+              "uncertain_misleading_report", "replaced_lock",
+              "irrelevant_history", "clear_current_report", "delayed_feedback",
+          }
+          for case, modes in d["summary"].items():
+              assert set(modes) == {
+                  "structural", "structural_topk8", "refinement_refine",
+                  "refinement_associate", "refinement_learned",
+              }
+              assert all(0 <= v["completion_rate"] <= 1 for v in modes.values())
+              print("HELDOUT_CASE " + case + " " + json.dumps(modes, sort_keys=True))
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
