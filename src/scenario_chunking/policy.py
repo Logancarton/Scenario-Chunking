@@ -25,6 +25,7 @@ class ActionSelector:
         if not actions:
             raise RuntimeError("no candidate actions")
         scored: list[tuple[float, Action, list[str], object]] = []
+        interpretation_evaluations = 0
         for action in actions:
             features = state.action_features(action)
             base = self._base_prior(action)
@@ -37,6 +38,7 @@ class ActionSelector:
                     adaptive_gate=self.meaning_mode in ("adaptive", "gate_only"),
                 )
                 memory_evidence = max(-0.45, min(0.45, 0.52 * frame.integrated))
+                interpretation_evaluations += frame.examined_event_records
             else:
                 memory_evidence = self._memory_evidence(action, state, hits)
             clue = 0.78 if "clue_supported" in features else 0.0
@@ -67,6 +69,7 @@ class ActionSelector:
             reasons=reasons,
             retrieval_hits=hits,
             meaning_frame=frame,
+            interpretation_event_evaluations=interpretation_evaluations,
         )
 
     @staticmethod
