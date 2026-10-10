@@ -21,6 +21,8 @@ class EpisodicMemory:
         # Directed explanatory links, separate from chronological links.
         # Stored with provenance; a hypothesized edge is not an observed cause.
         self.causal_links: dict[str, dict[str, tuple[str, float]]] = defaultdict(dict)
+        # Per-chunk learned interpretations reference original evidence; no event is copied.
+        self.layer_meanings: dict[tuple[str, str, str], object] = {}
         self._event_ids = count(1)
         self._chunk_ids = count(1)
 
@@ -126,6 +128,11 @@ class EpisodicMemory:
         for neighbor, (evidence, confidence) in sorted(self.causal_links.get(chunk_id, {}).items()):
             nearby.append((neighbor, "causal", evidence, confidence))
         return nearby
+
+    def store_layer_meaning(self, chunk_id: str, axis: str, action_label: str, meaning: object) -> None:
+        if chunk_id not in self.chunks:
+            raise KeyError(chunk_id)
+        self.layer_meanings[(chunk_id, axis, action_label)] = meaning
 
     def chunk_events(self, chunk_id: str) -> list[Event]:
         return [self.events[eid] for eid in self.chunks[chunk_id].event_ids]
