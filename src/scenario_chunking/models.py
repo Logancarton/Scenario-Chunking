@@ -156,6 +156,7 @@ class SelectionDecision:
     predicted_success: float
     reasons: list[str]
     retrieval_hits: list[RetrievalHit]
+    meaning_frame: Any = None
 
 
 @dataclass
