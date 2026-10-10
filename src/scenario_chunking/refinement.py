@@ -214,6 +214,16 @@ class ProgressiveRefiner:
             elif direct[0][1].kind == "try_key" and investigative:
                 desired_label = investigative[0][1].label
                 decision_basis = "resolve_competing_hypotheses"
+        # A memory axis may show activity for a superficially similar
+        # historical attempt, but if no candidate hypothesis has an applicable
+        # causal source, that is NOT evidence for using the historical key.
+        if not contenders and not any(state.key_observations.values()):
+            investigative = [row for row in direct if row[1].kind != "try_key"]
+            if investigative and direct[0][1].kind == "try_key":
+                selected_frame = direct[0][3]
+                if selected_frame and selected_frame.independent_sources:
+                    desired_label = investigative[0][1].label
+                    decision_basis = "reject_unverified_transfer"
         ordered = list(direct)
         if desired_label and direct[0][1].label != desired_label:
             chosen = next((row for row in ordered if row[1].label == desired_label), None)
