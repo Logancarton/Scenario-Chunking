@@ -96,7 +96,7 @@ This **proposes relevance**, not truth. Contradictions and source deduplication 
 
 Every treatment shares the initial seeds, candidate action rules, structural retrieval top-K, and environment. Closed-loop action choices can change subsequent states, **so later events are not matched**. Same-state, same-RNG direct-scoring counterfactuals are logged at each treatment's decision. They identify choice influence, not causal improvements to eventual performance.
 
-The five observable contexts in this first implementation are actually **four**: exploration, supported clue, contradicted candidate and social assistance. The classifier uses only current agent state and selected action, never hidden correct-key state. This context vocabulary is hand-engineered and a generalization limitation.
+The four observable contexts in this first implementation are exploration, supported clue, contradicted candidate and social assistance. The classifier uses only current agent state and selected action, never hidden correct-key state. This context vocabulary is hand-engineered and a generalization limitation.
 
 Feedback for try-key actions comes from their observed outcome. For information gathering, immediate informativeness is a learning target, **not** proof that the step caused later goal success. Separate associations and gates can be frozen for ablations. Interpretation gains learned from past outcomes do **not** rewrite past events.
 
@@ -153,7 +153,7 @@ Lower Brier indicates more accurate estimated probabilities for observed *try-ke
 
 *Measured cumulative selector latency per six-episode seed-run on a GitHub-hosted runner; runs execute different numbers of selected actions. Retrieval adds separate measured latency. Counts include repeated interpreter event examinations for different candidate actions and are processing **proxies**, not CPU FLOPs.*
 
-**Observed learning:** Each of the five adaptive runs updated at least one axis association, and each updated its gate logits. The gate-only condition likewise changed parameters. Fixed conditions changed neither. Approximately 29 chunk/axis/action meaning records were retained per seed-run. The next audit explicitly checks which **individual axes** had evidence, learned associations, and nonzero gate shifts; a collective "weights changed" result must not be misreported as all five axes learning.
+**Observed learning:** Each of the five adaptive runs updated at least one axis association, and each updated its gate logits. The gate-only condition likewise changed parameters. Fixed conditions changed neither. Approximately 29 chunk/axis/action meaning records were retained per seed-run. **Axis-level audit (gate run #35):** The Self, Salience, Sequence, and Person layers produced evidence-grounded records and nonzero learned association gains. **Time produced no live meaning record and no learned association** in these six episodes. Integration logits changed for Self, Salience and Person; **not** for Sequence or Time. Fixed-meaning treatments learned no layer associations, as intended. Hence the five-layer *interface* is built and connected, but evidence does **not** support the stronger claim that all five layers learned through the live benchmark. Time's contradiction logic was tested with direct synthetic evidence; it was not exercised by actual selected-action meaning frames in these trajectories. This is an architectural/evaluation coverage gap, not a reason to retroactively force a positive result.
 
 **What improved:** Learned meanings reduced failed actions relative to fixed meanings (3.8 vs 5.0), reduced repeated actions (0.8 vs 1.6), improved recall and try-key Brier, and used 0.6 fewer total actions. Thus the layer-learning switch had an observed effect within the new architecture.
 
@@ -167,7 +167,7 @@ The last original episode, `E6_relational_transfer`, required means of 2.8 actio
 - The five interpretation rules and four context labels are partly hand-engineered. This is not evidence of spontaneous concept formation.
 - Evidence deduplication relies on claimed source IDs; outcome provenance relies on the event recording process. Forged claims can still pass.
 - Existing informative-predecessor policy credit can assign causal influence without proving contribution to later success.
-- Layer-specific gains can update only when that axis already contributed evidence; sparse/missing axes may remain unlearned.
+- Layer-specific gains can update only when that axis already contributed evidence; **Time remained dormant in all measured live decisions** despite a passing direct contradiction test. A new benchmark must test whether it can learn useful temporal validity from observations without requiring the agent to select a known-obsolete action.
 - Adaptive versus fixed variants have different state trajectories after their first divergent action. Same-RNG local direct-score counterfactuals are available, but later closed-loop states are not paired snapshots.
 - Relative parameter-count/compute-matched training controls, genuinely held-out causal structures, and calibrated confidence for misleading information are still missing.
 - A passing gate establishes execution and measurement integrity; it does not certify learning generalization.
