@@ -167,3 +167,22 @@ def test_false_claim_marked_observed_remains_an_unresolved_failure_mode():
     m.link_causal(seed.chunk_id, false_evidence.chunk_id, evidence="observed", confidence=1.0)
     hits, _ = direct_expand(m, seed, query("role:key", "key:silver", "outcome:success"))
     assert false_evidence.chunk_id in [hit.chunk_id for hit in hits]
+
+
+
+def test_the_two_archived_retrieval_misses_recover_on_identical_snapshots():
+    # Historical regression targets belong in tests only, never in routing rules.
+    from scenario_chunking.experiment import ExperimentRun
+
+    for seed, original_miss in ((7, "c001020"), (149, "c001016")):
+        run = ExperimentRun(RetrievalMode.STRUCTURAL, seed, distractor_count=1000)
+        run.run()
+        audit = [
+            x for x in run.same_snapshot_recovery_audit
+            if x["relevant_chunk_id"] == original_miss
+        ]
+        assert len(audit) == 1
+        assert audit[0]["baseline_missed"]
+        assert audit[0]["recovered_by_shadow_spread"]
+        assert original_miss not in audit[0]["shadow_initial_hits"]
+        assert original_miss in audit[0]["shadow_spread_hits"]
