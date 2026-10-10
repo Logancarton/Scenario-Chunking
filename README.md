@@ -232,7 +232,8 @@ a score without changing action, and for an action change not to be beneficial.
   this vulnerability. Provenance checks are not independent causal proof.
 - Top-6 retrieval after spreading has lower baseline recall because its live
   decisions and activation history can diverge from structural-only mode.
-  Attribution of the two original misses requires a same-snapshot replay.
+  A separate paired-snapshot replay (below) isolates recovery independently of
+  these trajectory changes.
 - The current action learner has a simple linear policy and the benchmark
   has ceiling-level completion; outcomes may not generalize to harder tasks.
 - Measured detailed-memory operations remain a proxy, not proof of
@@ -242,3 +243,28 @@ a score without changing action, and for an action change not to be beneficial.
 default, until it beats a stronger large-top-K control on behavioral quality
 at similar or lower memory cost. Do not promote these findings as a net
 cognitive improvement.
+
+
+### Paired-state audit of the original two misses
+
+A subsequent verification replay cloned the *entire pre-retrieval memory
+state* just before each baseline structural recall query, so the experimental
+one-hop router could run without changing the baseline state or action history.
+All other inputs and original top-6 rankings were preserved. The two archived
+misses were reproduced and **both recovered**:
+
+| Seed | Baseline miss | Present in unchanged top-6? | Found through one-hop spreading? |
+|---|---|---|---|
+| 7 | `c001020` | No | **Yes** (directly linked to retrieved `c001019`) |
+| 149 | `c001016` | No | **Yes** (directly linked to retrieved `c001015`) |
+
+The per-seed `same_snapshot_recovery_audit` records in `results.json`
+contain exact initial chunk IDs and extra activated IDs. Regression tests
+replay these documented failures with the historical IDs **only in tests**;
+the retrieval code has no special handling for their IDs, seeds or keys.
+
+This resolves the narrow question of whether one-hop spreading can recover
+these two missing episodes. It does **not** change the negative behavioral
+conclusion above: the spreading mode matched top-8 in actions while processing
+more detailed events and incurring greater latency. Its additional memory
+activations are not yet justified as the best action-selection policy.
