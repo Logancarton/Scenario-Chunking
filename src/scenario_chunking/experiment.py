@@ -137,11 +137,27 @@ class ExperimentRun:
             if not actions:
                 break
             original_decision = None
+            rng_snapshot = self.rng.getstate()
             if self.mode == RetrievalMode.SPREADING:
-                rng_snapshot = self.rng.getstate()
                 original_decision = self.selector.select(state, actions, hits[: self.router.top_k])
                 self.rng.setstate(rng_snapshot)
             decision = self.selector.select(state, actions, hits)
+            rng_after_selection = self.rng.getstate()
+            # Leave-one-out analysis for EACH additional activation. The policy
+            # and random exploration state are exactly matched to the live choice.
+            individual_spread_influence = {}
+            for added in hits[self.router.top_k:]:
+                self.rng.setstate(rng_snapshot)
+                without = self.selector.select(
+                    state, actions, [h for h in hits if h.chunk_id != added.chunk_id]
+                )
+                individual_spread_influence[added.chunk_id] = {
+                    "selection_changed_without": without.action != decision.action,
+                    "action_without": without.action.label,
+                    "selected_score_delta": round(decision.score - without.score, 6),
+                    "changed_selected_score": abs(decision.score - without.score) > 1e-9,
+                }
+            self.rng.setstate(rng_after_selection)
             spread_changed_action = bool(original_decision and original_decision.action != decision.action)
             spread_changed_score = bool(original_decision and abs(original_decision.score - decision.score) > 1e-9)
             action = decision.action
@@ -208,6 +224,7 @@ class ExperimentRun:
                 "initially_activated": list(stats.initial_hit_ids),
                 "spread_activated": list(stats.spread_hit_ids),
                 "spread_justifications": dict(stats.spread_justifications),
+                "individual_spread_influence": individual_spread_influence,
                 "spread_detailed_events": stats.spread_detailed_events,
                 "neighbor_headers_examined": stats.neighbor_headers_examined,
                 "spread_budget_exhausted": stats.budget_exhausted,
