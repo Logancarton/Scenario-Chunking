@@ -58,8 +58,28 @@ jobs:
               if item["baseline_missed"]
           ]
           print("SAME_SNAPSHOT_MISSES=" + json.dumps(reference_misses, sort_keys=True))
-          print(json.dumps({k: d["aggregate"][k] for k in
-                            ("structural", "structural_topk8", "spreading")}, indent=2))
+          for key in ("structural", "meaning_fixed", "meaning_learned",
+                      "meaning_gate_only", "meaning_adaptive"):
+              summary = d["aggregate"][key]
+              print("MEANING_METRICS " + key + " " + json.dumps({
+                  field: summary.get(field) for field in
+                  ("completion_rate_mean", "actions_mean", "failed_actions_mean",
+                   "repeated_actions_mean", "retrieval_recall_at_k_mean",
+                   "active_detail_events_mean", "retrieval_latency_ms_mean",
+                   "peak_memory_bytes_mean", "try_key_brier_mean",
+                   "paired_direct_action_changes_mean", "stored_meanings_mean")
+              }, sort_keys=True))
+              relevant = [r for r in d["runs"] if r["mode"] == key]
+              if relevant:
+                  print("MEANING_LEARNING " + key + " " + json.dumps({
+                      "seeds_with_axis_updates": sum(bool(r.get("meaning_snapshot", {}).get("layer_associations"))
+                                                   for r in relevant),
+                      "seeds_with_gate_updates": sum(bool(r.get("meaning_snapshot", {}).get("integration_logits"))
+                                                   for r in relevant),
+                      "heldout_E6_actions": [next(e["actions"] for e in r["episodes"]
+                                                 if e["episode_id"] == "E6_relational_transfer")
+                                             for r in relevant],
+                  }, sort_keys=True))
           PY
       - name: Upload measured results
         if: always()
