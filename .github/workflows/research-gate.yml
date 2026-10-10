@@ -78,6 +78,20 @@ jobs:
                                                    for r in relevant),
                       "seeds_with_gate_updates": sum(bool(r.get("meaning_snapshot", {}).get("integration_logits"))
                                                    for r in relevant),
+                      "axes_with_stored_meanings": sorted({
+                          axis for r in relevant for ep in r["episodes"] for step in ep["trace"]
+                          if step.get("meaning") for axis in step["meaning"]["layers"]
+                      }),
+                      "axes_with_learned_gain": sorted({
+                          key.split("|")[0] for r in relevant for key, value in
+                          r.get("meaning_snapshot", {}).get("layer_associations", {}).items()
+                          if abs(value) > 1e-8
+                      }),
+                      "axes_with_adapted_gate": sorted({
+                          key.split("|")[1] for r in relevant for key, value in
+                          r.get("meaning_snapshot", {}).get("integration_logits", {}).items()
+                          if abs(value) > 1e-8
+                      }),
                       "heldout_E6_actions": [next(e["actions"] for e in r["episodes"]
                                                  if e["episode_id"] == "E6_relational_transfer")
                                              for r in relevant],
