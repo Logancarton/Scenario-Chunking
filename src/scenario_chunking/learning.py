@@ -22,6 +22,11 @@ class OutcomeLearner:
         self.weights: dict[str, float] = defaultdict(float)
         self.episode_trace: list[ActionTrace] = []
         self.credit_log: list[dict[str, object]] = []
+        # Separate learned interpretation gains from contextual integration logits.
+        # Historical events stay immutable; these are learned associations only.
+        self.meaning_gains: dict[tuple[str, str, str], float] = defaultdict(float)
+        self.gate_logits: dict[tuple[str, str], float] = defaultdict(float)
+        self.meaning_updates: list[dict[str, object]] = []
 
     def begin_episode(self) -> None:
         self.episode_trace = []
@@ -83,6 +88,51 @@ class OutcomeLearner:
 
     def _find(self, event_id: str) -> ActionTrace | None:
         return next((item for item in self.episode_trace if item.event_id == event_id), None)
+
+    def layer_association(self, axis: str, context: str, action_kind: str) -> float:
+        return self.meaning_gains[(axis, context, action_kind)]
+
+    def integration_logit(self, context: str, axis: str) -> float:
+        return self.gate_logits[(context, axis)]
+
+    def learn_from_meaning(self, frame, *, beneficial: bool,
+                           learn_layers: bool, learn_gate: bool) -> None:
+        """Observed immediate outcome/information gain, never hidden task truth.
+
+        An informative inspection has evidence of information gain, NOT causal
+        credit for a later successful key attempt.
+        """
+        if not self.enabled or not frame or not frame.meanings:
+            return
+        import math
+        probability = 1.0 / (1.0 + math.exp(-frame.integrated))
+        residual = (1.0 if beneficial else 0.0) - probability
+        # Paired ablations isolate gains and gates by independently freezing them.
+        if learn_gate:
+            for meaning in frame.meanings:
+                key = (frame.context, meaning.axis)
+                gradient = frame.weights[meaning.axis] * (meaning.value - frame.integrated)
+                self.gate_logits[key] = max(-2.0, min(2.0,
+                    self.gate_logits[key] + 0.25 * residual * gradient))
+        if learn_layers:
+            for meaning in frame.meanings:
+                key = (meaning.axis, frame.context, frame.action_kind)
+                # Axis association only learns when that axis had evidence.
+                self.meaning_gains[key] = max(-0.8, min(0.8,
+                    self.meaning_gains[key] + 0.24 * residual * meaning.value))
+        self.meaning_updates.append({
+            "context": frame.context, "action_kind": frame.action_kind,
+            "observed_benefit": beneficial, "probability": probability,
+            "axes_with_evidence": [m.axis for m in frame.meanings],
+            "learned_layers": learn_layers, "learned_integration": learn_gate,
+        })
+
+    def meaning_snapshot(self) -> dict[str, dict[str, float]]:
+        return {
+            "layer_associations": {"|".join(k): round(v, 6) for k, v in sorted(self.meaning_gains.items())},
+            "integration_logits": {"|".join(k): round(v, 6) for k, v in sorted(self.gate_logits.items())},
+            "feedback_updates": len(self.meaning_updates),
+        }
 
     def snapshot(self) -> dict[str, float]:
         if not self.enabled:
