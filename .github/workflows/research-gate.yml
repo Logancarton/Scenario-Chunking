@@ -3,6 +3,8 @@ name: Scenario Chunking research gate
 on:
   push:
     branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
