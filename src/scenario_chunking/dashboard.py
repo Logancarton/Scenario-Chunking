@@ -66,6 +66,23 @@ def write_dashboard(payload: dict[str, Any], path: str | Path) -> None:
     pref = structural.get("preference_snapshots", [])
     pref_json = html.escape(json.dumps(pref, indent=2))
     control = payload["recency_negative_control"]
+    meaning_runs = [r for r in payload["runs"] if r["mode"].startswith("meaning_")]
+    meaning_rows = []
+    for run in meaning_runs:
+        sample = next(
+            (step for ep in run["episodes"] for step in ep["trace"]
+             if step.get("meaning") and step["meaning"]["layers"]), None
+        )
+        meaning_rows.append({
+            "mode": run["mode"], "seed": run["seed"],
+            "associations": run.get("meaning_snapshot", {}).get("layer_associations", {}),
+            "gates": run.get("meaning_snapshot", {}).get("integration_logits", {}),
+            "source_bound_meanings": run.get("layer_meanings_stored", 0),
+            "paired_direct_choice_changes": run.get("paired_direct_action_changes", 0),
+            "try_key_brier": run.get("try_key_brier"),
+            "sample_decision_layers_and_weights": sample["meaning"] if sample else {},
+        })
+    meaning_html = html.escape(json.dumps(meaning_rows, indent=2)[:32000])
 
     document = f"""<!doctype html>
 <html><head><meta charset='utf-8'><title>Scenario-Chunking Results</title>
@@ -88,7 +105,12 @@ body{{font-family:system-ui,sans-serif;max-width:1180px;margin:32px auto;padding
 <h2>4. Action preference changes after feedback</h2><pre>{pref_json}</pre>
 <h2>5. Historical events versus current beliefs</h2><p>Episode 3 introduces a replaced lock. The current contradiction is carried in cognitive state and structural retrieval penalizes the old successful key without rewriting the old event.</p>
 <p>Negative recency control: fixed-recency top-1 = <b>{html.escape(str(control['fixed_recency_top1']))}</b>; structural top-1 = <b>{html.escape(str(control['structural_top1']))}</b>; recency made the decision worse = <b>{control['fixed_recency_worse']}</b>.</p>
-<h2>6. Computation/retrieval cost</h2><p>Active detailed-event volume (lower is better at equivalent task performance):</p>{cost_bars}
+<h2>6. Independent layer meanings and contextual weights (when enabled)</h2>
+<p>Each sampled decision includes source-event references, five available-axis meanings,
+integration weights and observed learning parameters. Gate changes do not by themselves
+establish better reasoning. See event_traces.jsonl for the full action-level sequence.</p>
+<pre>{meaning_html}</pre>
+<h2>7. Computation/retrieval cost</h2><p>Active detailed-event volume (lower is better at equivalent task performance):</p>{cost_bars}
 <p>Full numerical results, failure cases, per-step initial/spread activations, and counterfactual action impact are in <code>results.json</code> and <code>event_traces.jsonl</code>. Detail counts are proxies; runtime latency and Python peak memory are measured separately.</p>
 </body></html>"""
     path.write_text(document, encoding="utf-8")
