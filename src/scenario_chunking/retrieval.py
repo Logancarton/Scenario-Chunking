@@ -14,10 +14,14 @@ class MemoryRouter:
     def __init__(
         self, memory: EpisodicMemory, mode: RetrievalMode, *,
         top_k: int = 6, spread_budget: SpreadBudget | None = None,
+        candidate_budget: int | None = None,
     ) -> None:
         self.memory = memory
         self.mode = mode
         self.top_k = top_k
+        if candidate_budget is not None and candidate_budget < top_k:
+            raise ValueError("candidate budget cannot be smaller than top_k")
+        self.candidate_budget = candidate_budget
         self.spreader = BoundedNeighborActivator(memory, spread_budget) if mode == RetrievalMode.SPREADING else None
 
     def retrieve(self, query: RetrievalQuery) -> tuple[list[RetrievalHit], RetrievalStats]:
@@ -71,7 +75,48 @@ class MemoryRouter:
         stats.latency_ms = (perf_counter() - started) * 1000.0
         return hits, stats
 
+    def _focused_candidates(self, query: RetrievalQuery) -> list[str]:
+        """Candidate generation bounded independently of stored memory size.
+
+        Prefer specific cue postings; interleave quality-preserving exemplars
+        with recent observations. This is an optional experimental treatment.
+        It never inspects event details or accesses environment truth.
+        """
+        assert self.candidate_budget is not None
+        budget = self.candidate_budget
+        tags = [t for t in query.semantic_tags if not t.startswith("goal:")]
+        tags.sort(key=lambda tag: (len(self.memory.tag_index.get(tag, ())), tag))
+        tags += ["person:" + p for p in sorted(query.person_ids)]
+        selected: dict[str, None] = {}
+        if tags:
+            per_tag = max(2, budget // len(tags))
+            for tag in tags:
+                if tag.startswith("person:"):
+                    # Person postings are not a separate goal-wide memory scan.
+                    ids = list(sorted(self.memory.person_index.get(tag[7:], ())))[:per_tag]
+                else:
+                    ids = self.memory.focused_postings(tag, per_tag)
+                for cid in ids:
+                    if len(selected) >= budget:
+                        break
+                    selected[cid] = None
+            if len(selected) < budget:
+                for tag in tags:
+                    if tag.startswith("person:"):
+                        continue
+                    for cid in self.memory.focused_postings(tag, budget):
+                        if len(selected) >= budget:
+                            break
+                        selected[cid] = None
+        else:
+            # Goal-only queries have no discriminative category evidence.
+            # Fall back to baseline semantics rather than silently truncating.
+            return sorted(self.memory.goal_index.get(query.goal_id, ()))
+        return list(selected)
+
     def _sparse_candidates(self, query: RetrievalQuery) -> list[str]:
+        if self.candidate_budget is not None:
+            return self._focused_candidates(query)
         candidates: set[str] = set(self.memory.goal_index.get(query.goal_id, set()))
         # Use compact routing tags; no detailed historical events are loaded here.
         for tag in query.semantic_tags:
