@@ -186,7 +186,8 @@ class IncrementalRun:
             "updated_relations": update["updated"],
             "thought": decision.thought_trace,
             "detail_events": stats.active_detail_events,
-            "header_evaluations": stats.header_evaluations,
+            "header_evaluations": stats.header_evaluations + stats.neighbor_headers_examined,
+            "neighbor_headers_examined": stats.neighbor_headers_examined,
             "retrieval_ms": stats.latency_ms,
             "cognitive_operations": 2 if decision.thought_trace else 1,
         }
