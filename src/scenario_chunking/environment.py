@@ -371,3 +371,112 @@ class UncertaintyWorld:
             reports.append({"source": source, "axis": axis, "token": reported,
                             "context": context, "issued_round": round_no})
         return reports
+
+
+# Experiment 8 — independent contextual decision environment.
+# World truth is private and is NEVER used as a policy feature or retrieval cue.
+from itertools import product
+
+
+@dataclass(frozen=True)
+class ContextualTask:
+    task_id: str
+    device_name: str
+    mode: str
+    material: str
+    phase: str
+    actual_dependency: str
+    reported_dependency: str
+    source: str
+    context: str
+    consequence: float
+    self_relevance: float
+    revision_notice: bool
+    profile: str
+
+    def public(self) -> dict:
+        return {
+            "task_id": self.task_id, "device_name": self.device_name,
+            "mode": self.mode, "material": self.material,
+            "phase": self.phase, "reported_dependency": self.reported_dependency,
+            "source": self.source, "context": self.context,
+            "consequence": self.consequence,
+            "self_relevance": self.self_relevance,
+            "revision_notice": self.revision_notice,
+        }
+
+
+class ContextualWorld:
+    """A four-choice conditional procedure, not five separate axis puzzles.
+
+    Two independent causal interactions jointly determine the correct procedure.
+    The pair relationships transfer across held-out four-way combinations.
+    A fallible source reports the dependency, which can be inspected at a cost.
+    """
+
+    PROCEDURES = ("isolate", "purge", "recalibrate", "reseat")
+    VALUES = ("stable", "unstable")
+    SOURCES = ("Aster", "Beryl", "Cinder")
+    FACTORS = tuple(product(range(2), repeat=4))
+    TRAIN_KEYS = tuple(x for x in FACTORS if (sum(x) % 4) != 0)
+    HOLDOUT_KEYS = tuple(x for x in FACTORS if (sum(x) % 4) == 0)
+
+    def __init__(self, seed: int) -> None:
+        self.seed = seed
+
+    def task(self, index: int, *, heldout: bool = False,
+             complexity: int = 2) -> ContextualTask:
+        if complexity not in (1, 2, 3):
+            raise ValueError("complexity must be 1, 2, or 3")
+        rng = random.Random(self.seed * 1000003 + index * 613 + (99991 if heldout else 0))
+        pool = self.HOLDOUT_KEYS if heldout else self.TRAIN_KEYS
+        bits = pool[index % len(pool)]
+        mode, dependency, material, phase = bits
+        context = ("day", "night")[index % 2]
+        source = self.SOURCES[(index // 2) % 3]
+        accuracy = {"Aster": .85, "Beryl": .22,
+                    "Cinder": .75 if context == "day" else .3}[source]
+        is_correct = rng.random() < (accuracy if complexity > 1 else 1.0)
+        reported = dependency if is_correct else 1 - dependency
+        return ContextualTask(
+            task_id=f"{'transfer' if heldout else 'experience'}-{self.seed}-{index}",
+            device_name=f"{rng.choice(('conveyor', 'press', 'pump', 'mixer'))}-{rng.randrange(100000)}",
+            mode=("warm", "cold")[mode],
+            material=("porous", "sealed")[material],
+            phase=("initial", "recovery")[phase],
+            actual_dependency=self.VALUES[dependency],
+            reported_dependency=self.VALUES[reported],
+            source=source, context=context,
+            consequence=(.25, .7, 1.0)[complexity - 1],
+            self_relevance=(.3, .65, .95)[complexity - 1],
+            revision_notice=complexity == 3 and not is_correct,
+            profile=("simple", "uncertain", "adversarial")[complexity - 1],
+        )
+
+    @staticmethod
+    def _bit(value: str, positive: str) -> int:
+        return int(value == positive)
+
+    def outcome(self, task: ContextualTask, procedure: str) -> bool:
+        if procedure not in self.PROCEDURES:
+            raise ValueError("unknown procedure")
+        # The agent observes outcomes only; it never receives this equation.
+        bit0 = self._bit(task.mode, "cold") ^ self._bit(task.actual_dependency, "unstable")
+        bit1 = self._bit(task.material, "sealed") ^ self._bit(task.phase, "recovery")
+        return procedure == self.PROCEDURES[bit0 + 2 * bit1]
+
+    def inspect_dependency(self, task: ContextualTask) -> dict:
+        return {"dependency": task.actual_dependency, "verified": True,
+                "inspection_cost": .25, "source": "instrument"}
+
+    @staticmethod
+    def relational_cues(public: dict, *, dependency: str | None = None) -> frozenset[str]:
+        """Signals are conjunctions of contextual properties, not answer labels."""
+        dep = dependency if dependency is not None else public["reported_dependency"]
+        return frozenset({
+            f"pair:mode={public['mode']}|dependency={dep}",
+            f"pair:material={public['material']}|phase={public['phase']}",
+            f"source:{public['source']}|context:{public['context']}",
+            f"mode:{public['mode']}", f"dependency:{dep}",
+            f"material:{public['material']}", f"phase:{public['phase']}",
+        })
