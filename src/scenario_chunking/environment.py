@@ -497,3 +497,58 @@ class ContextualWorld:
             f"mode:{public['mode']}", f"dependency:{dep}",
             f"material:{public['material']}", f"phase:{public['phase']}",
         })
+
+
+@dataclass(frozen=True)
+class ReturnTimelineWorld:
+    """Synthetic private truth for a time-dependent expectation.
+
+    Only check_return yields instrument evidence. Neither pending-clock events
+    nor source testimony grants the cognitive policy access to actual_arrival_at.
+    """
+    subject: str
+    promised_duration: float
+    actual_arrival_at: float | None
+    observation_available: bool = True
+    timestamp_available: bool = True
+
+    def promise(self) -> EnvironmentSignal:
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=f"{self.subject} says they will return in {self.promised_duration:g} minutes",
+            semantic_tags=frozenset({"signal:temporal", "temporal:promise"}),
+            person_id=self.subject, confidence=.9, informative=True,
+            metadata={"source_status": "reported_promise",
+                      "promised_duration": self.promised_duration},
+        )
+
+    def testimony(self, *, reported_present: bool) -> EnvironmentSignal:
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content="A bystander reports presence, without direct verification",
+            semantic_tags=frozenset({"signal:temporal", "temporal:report"}),
+            confidence=.35,
+            metadata={"source_status": "unverified_testimony",
+                      "reported_present": reported_present},
+        )
+
+    def check_return(self, now: float) -> EnvironmentSignal:
+        if not self.observation_available:
+            return EnvironmentSignal(
+                kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+                content="The return sensor is unavailable",
+                semantic_tags=frozenset({"signal:temporal", "temporal:unavailable"}),
+                metadata={"source_status": "unavailable"},
+            )
+        arrived = self.actual_arrival_at is not None and self.actual_arrival_at <= now
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=f"Direct sensor check: {'returned' if arrived else 'absent'}",
+            semantic_tags=frozenset({"signal:temporal",
+                                     "temporal:returned" if arrived else "temporal:absent"}),
+            informative=True, confidence=1.0,
+            metadata={"source_status": "direct_observation",
+                      "returned": arrived,
+                      "arrival_at": (self.actual_arrival_at
+                                     if arrived and self.timestamp_available else None)},
+        )
