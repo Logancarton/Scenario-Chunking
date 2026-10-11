@@ -63,8 +63,8 @@ class OutcomeLearner:
     @staticmethod
     def incremental_scope(cues: frozenset[str]) -> str | None:
         """Stable conceptual address, excluding incidental scenario identities."""
-        domains = sorted(c for c in cues if c.startswith("pair:domain:"))
-        epochs = sorted(c for c in cues if c.startswith("pair:epoch:"))
+        domains = sorted(c for c in cues if c.startswith("pair:domain:") and "&" not in c)
+        epochs = sorted(c for c in cues if c.startswith("pair:epoch:") and "&" not in c)
         if len(domains) != 1 or len(epochs) != 1:
             return None
         return domains[0] + "&" + epochs[0]

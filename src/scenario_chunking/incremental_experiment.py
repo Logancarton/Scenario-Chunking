@@ -386,4 +386,13 @@ def write_incremental_benchmark(output="results-e11", **kwargs) -> dict:
     (destination / "frozen_trials.json").write_text(
         json.dumps(payload["frozen_trials"], indent=2, sort_keys=True),
         encoding="utf-8")
+    if payload["seeds"] and payload["families"]:
+        # Inspectable sequence of 10 minimally changing live experiences.
+        trace = [row for row in payload["trials"]
+                 if row["seed"] == payload["seeds"][0]
+                 and row["family"] == payload["families"][0]
+                 and row["mode"] == "incremental_full"][:10]
+        (destination / "continuity_trace.json").write_text(
+            json.dumps(trace, indent=2, sort_keys=True),
+            encoding="utf-8")
     return payload
