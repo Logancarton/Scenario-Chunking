@@ -347,3 +347,22 @@ Mean held-out source-prediction Brier score was approximately 0.170 for trained 
 Signal-cue ablation completion with extended reflection: Self 25%, Salience 0%, Time 20%, Sequence 5%, Person 0%. **These remove the category's signal-token cue, not every axis-specific retrieval or interpretation mechanism.** They cannot establish unique biological-style responsibilities for all five categories.
 
 **Conclusion:** This environment is harder than Experiment 6 and is executed through the shared live cognitive pathway. Reflection can cause information-seeking and sometimes help after changes, but the one-task completion improvement is too small to justify a cognitive advantage claim. The strongest next challenge is held-out causal combinations and a genuinely compute-matched one-pass policy with matched information acquisition, followed by independent replication on substantially more seeds. Sonara production remains untouched.
+
+## Experiment 8 — Cognitive scaling and adaptive focus (implementation stage)
+
+**Branch:** `experiment/cognitive-scaling-e8`. **Production:** untouched. The bounded-focus mechanism is built, and the research CLI, incremental-training harness and behavioral gates are connected. Positive reasoning results must **not** be asserted until CI and the full multi-seed study produce measured evidence.
+
+**Signal ownership:** Experiment 7's `UncertaintyWorld` remains the private source of procedural truth. `EpisodicMemory` incrementally maintains a compact index of historically salient/representative and recent cue-linked chunks; `MemoryRouter` optionally uses it to bound candidate header evaluations. `OutcomeLearner.focus_axes` derives category priority only from observed prerequisite outcomes, preserving explicit invalidation of out-of-date sequencing. `UncertaintyRun` still invokes the same interpreter, selector and progressive thought refiner. `scaling.py` sequences these existing owners; it is not a second cognitive runtime or selector.
+
+**Design:** Each treatment observes a seed-matched stream of action attempts and observed success/failure, accumulating 20, 100, 500, 2,000, then 10,000 experience steps in the **same learner and memory**. Test-only forked states are confronted with new private environment mappings and novel procedural scenes at every stage. Distractor memory sizes are controlled independently (100, 1,000, 5,000, 20,000, 20,000 minimum chunks), including low-trust same-goal misleading reports. The untrained control receives no observed training. Stage test outcomes never leak back into the continuing training stream. The experiment records stage/seed decision accuracy, budgeted goal completion, action/inspection cost, active detail reads, header scans, latency, processing evaluations and paired bootstrap intervals.
+
+**Current limitations / open research gates:**
+- Adaptive **category focus** is integrated; an **outcome-learned reflection stopping rule is not yet implemented**. Existing limited/extended refiner modes still use fixed review depths. Thus this experiment must not report that adaptive reflection itself has been proved superior.
+- The held-out world changes equipment, identity strings and symbol assignments, but preserves the same five categories and procedural family. This tests recombination and interference, not unconstrained abstraction or broad general intelligence.
+- The representative/recent focus index is a new attention heuristic, not yet a demonstrated optimal abstraction. Its priority must be compared against random, recent-only and enlarged retrieval under matched processing budgets.
+- Full study (30 seeds, all conditions, 10,000 experiences, up to 20,000 memories), independent reproducibility and quantified uncertainty are not satisfied by the smoke gate.
+- A separate-process continuation test is implemented. An in-process evaluation fork is not independent process restart validation of a full multi-stage deployed run.
+- Certain training and memory-size factors remain correlated at the largest stages; a factorial subset is still needed to isolate their effects.
+- The original Experiment 7 tests and controls remain essential. Negative findings should be retained rather than adjusting task difficulty to improve the score.
+
+**Research decision rule:** Look for paired gains in goal completion *and* lower irrelevant processing per correct decision, not higher episodic recall alone. Do not claim cognitive maturity from smoke compilation or passing infrastructure tests.
