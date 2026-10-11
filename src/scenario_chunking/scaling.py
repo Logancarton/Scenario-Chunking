@@ -65,22 +65,64 @@ class ScalingRun(UncertaintyRun):
                          else self.world.options[axis][rng.randrange(4)])
             if trial < self.experiences:
                 continue
+            if trial == 500 and not self.world.revised:
+                # The historical protocol changes: a notice is observable, but
+                # the new dependency graph is not handed to a cognitive owner.
+                self.world.revise()
+                if self.treatment != "untrained_structural":
+                    notice = self._event(
+                        f"training-revision-{trial}", trial,
+                        kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
+                        content="Maintenance bulletin: procedure and sequence changed",
+                        tags={"goal:workshop_recovery", "axis:time",
+                              "axis:sequence", "revision:announced"},
+                        metadata={"change_notice": True, "changed_axis": "sequence"},
+                    )
+                    self.memory.create_chunk(
+                        events=[notice], transition_reason="training_change_notice",
+                        self_relevance=1.0, salience=1.0)
             accepted = self.world.accepted(axis, candidate)
+            observed_kind = "success" if accepted else "failure"
             if self.treatment != "untrained_structural":
                 self.learner.begin_episode()
-                self._feedback(
-                    f"scale-training-{trial}", trial,
-                    Action("resolve", candidate, axis), accepted,
-                    source="observed_training_trial", person=claim["source"],
-                )
-                # A claim is checked only when the action actually tests it.
-                if candidate == claim["token"]:
-                    self.learner.verify_source(claim["source"],
-                                               claim["context"], accepted)
+                # Dependency probes are causal observations; a blocked action
+                # cannot imply the chosen symbol was incorrect.
+                status, missing = self.world.attempt(axis, candidate, set()) if trial % 9 == 0 else (None, None)
+                if status == "blocked" and missing is not None:
+                    attempt = self._event(
+                        f"scale-training-{trial}", trial, kind=EventKind.ACTION,
+                        truth=TruthStatus.ATTEMPT,
+                        content=f"Attempted {axis} before prerequisites",
+                        tags={"goal:workshop_recovery", f"axis:{axis}"},
+                        action=Action("resolve", candidate, axis))
+                    result = self._event(
+                        f"scale-training-{trial}", trial, kind=EventKind.OUTCOME,
+                        truth=TruthStatus.OUTCOME,
+                        content=f"Observed prerequisite blocker: {missing}",
+                        tags={"goal:workshop_recovery", f"axis:{axis}",
+                              f"prerequisite:{missing}", "outcome:blocked"},
+                        outcome="blocked", cause=attempt.event_id,
+                        metadata={"observed_blocker": missing, "dependent": axis})
+                    self.memory.create_chunk(
+                        events=[attempt, result], transition_reason="causal_blocked_attempt",
+                        self_relevance=.9, salience=.95)
+                    self.learner.observe_prerequisite(missing, axis)
+                    observed_kind = "blocked"
+                else:
+                    self._feedback(
+                        f"scale-training-{trial}", trial,
+                        Action("resolve", candidate, axis), accepted,
+                        source="observed_training_trial", person=claim["source"],
+                    )
+                    # Source reliability is verified only if that testimony
+                    # was directly tested by the action, not by hidden truth.
+                    if candidate == claim["token"]:
+                        self.learner.verify_source(
+                            claim["source"], claim["context"], accepted)
                 self.training_observations.append({
                     "trial": trial, "axis": axis, "candidate": candidate,
                     "source": claim["source"], "context": claim["context"],
-                    "observed_success": accepted,
+                    "observed_outcome": observed_kind,
                 })
             self.experiences += 1
 
