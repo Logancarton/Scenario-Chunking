@@ -98,7 +98,7 @@ class ActionSelector:
                     scored, thought_trace = self.refiner.refine_incremental(
                         state, scored, hits, context=transfer_context or {},
                     )
-                elif (transfer_context or {}).get("cognitive_mode") == "temporal_value":                if (transfer_context or {}).get("cognitive_mode") == "temporal_value":
+                elif (transfer_context or {}).get("cognitive_mode") == "temporal_value":
                     scored, thought_trace = self.refiner.refine_temporal_value(
                         state, scored, hits, context=transfer_context or {},
                     )
