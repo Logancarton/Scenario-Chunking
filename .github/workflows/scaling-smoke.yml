@@ -2,7 +2,7 @@ name: Experiment 8 scaling smoke
 
 on:
   push:
-    branches: ["experiment/cognitive-scaling-e8"]
+    branches: ["experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected"]
   workflow_dispatch:
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
         run: |
           scenario-chunking --scaling --output results-scaling \
             --seeds 7 --rounds 2 --training-stages 20,100 \
-            --memory-stages 100,500 --candidate-budget 32 \
+            --memory-stages 50,100 --complexities 1,3 --candidate-budget 32 \
             --scaling-conditions untrained_structural,strong_one_pass,adaptive_focus,bounded_without_learned_focus
       - name: Validate actual research output
         run: |
@@ -32,9 +32,9 @@ jobs:
           from pathlib import Path
           p = json.loads(Path("results-scaling/scaling_summary.json").read_text())
           r = json.loads(Path("results-scaling/scaling_trials.json").read_text())
-          assert p["experiment"] == 8 and len(r) == 8
+          assert p["experiment"] == 8 and len(r) == 32
           assert all(0 <= t["completion_rate"] <= 1 for t in r)
-          assert all(t["mean_header_evaluations"] <= 32 for t in r if t["treatment"] in ("adaptive_focus", "bounded_without_learned_focus"))
+          assert all(t["mean_header_evaluations"] <= 32 for t in r if t["treatment"] != "larger_retrieval")
           print(json.dumps(p["stage_results"], indent=2))
           PY
       - name: Compilation and scoped diff check
