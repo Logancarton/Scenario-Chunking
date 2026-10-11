@@ -39,8 +39,12 @@ jobs:
           assert len(r) == 30 * 3 * 4
           assert all(len(p["paired_reflection_only"][s]["by_seed"]) == 30 for s in ("20", "100", "500"))
           assert all(len(p["paired_reflection_only"][s]["bootstrap_95_interval"]) == 2 for s in ("20", "100", "500"))
+          assert len(p["paired_experience_gains"]["learned_focus_one_pass"]["500"]["by_seed"]) == 30
+          assert "learned_focus_one_pass" in p["paired_vs_untrained"]["500"]
           print("Paired reflection:", json.dumps(p["paired_reflection_only"], sort_keys=True))
           print("Paired focus:", json.dumps(p["paired_focus_vs_onepass"], sort_keys=True))
+          print("Paired experience gain:", json.dumps(p["paired_experience_gains"]["learned_focus_one_pass"], sort_keys=True))
+          print("Paired untrained comparison:", json.dumps(p["paired_vs_untrained"]["500"], sort_keys=True))
           PY
       - name: Compilation and scoped diff integrity
         run: |
