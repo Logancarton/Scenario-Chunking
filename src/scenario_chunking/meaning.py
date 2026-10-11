@@ -124,6 +124,65 @@ class MeaningInterpreter:
         # Do not transfer success of an arbitrary historical key to another key.
         return recorded.kind != "try_key" or recorded.key_name == candidate.key_name
 
+    def transfer_evidence(self, hits, features: frozenset[str], *, review_depth: int = 0):
+        """Evaluate cross-category causal outcomes from retrieved memory only.
+
+        A prediction, an unverified report, and an observation are NOT outcomes.
+        A deeper review spends extra processing to resolve chronological conflicts,
+        without writing inferred truths or accessing task-generator labels.
+        """
+        from collections import defaultdict
+        records = defaultdict(dict)
+        evaluations = 0
+        for hit in hits:
+            events = self.memory.chunk_events(hit.chunk_id)
+            attempts = {e.event_id: e for e in events if e.kind == EventKind.ACTION}
+            evaluations += len(events)
+            for event in events:
+                if (event.kind != EventKind.OUTCOME or
+                        event.truth_status != TruthStatus.OUTCOME or
+                        event.outcome not in ("success", "failure")):
+                    continue
+                attempt = attempts.get(event.cause_event_id)
+                if attempt is None:
+                    continue
+                axis = attempt.action.key_name if attempt.action else None
+                token = attempt.action.target if attempt.action else None
+                cue = f"signal:{axis}:{token}"
+                if cue not in features:
+                    continue
+                sid = str(event.metadata.get("source_event_id") or event.event_id)
+                records[cue][sid] = (
+                    event.occurrence_time,
+                    1.0 if event.outcome == "success" else -1.0,
+                    max(0.0, min(1.0, event.confidence)),
+                    event.event_id,
+                )
+        category_values = {}
+        provenance = {}
+        for cue in sorted(f for f in features if f.startswith("signal:")):
+            history = sorted(records.get(cue, {}).values(), key=lambda r: (r[0], r[3]))
+            # These are alternative evidence-handling budgets, not hidden labels.
+            # Only outcome events with an observed cause may influence the score.
+            if review_depth == 1:
+                chosen = history[-6:]
+            elif review_depth >= 3:
+                chosen = history[-3:]
+            else:
+                chosen = history
+            evaluations += (len(chosen) * max(0, review_depth))
+            total = sum(r[2] for r in chosen)
+            value = (sum(r[1] * r[2] for r in chosen) / total) if total else 0.0
+            category_values[cue] = value
+            provenance[cue] = [r[3] for r in chosen]
+        return {
+            "score": sum(category_values.values()) / max(1, len(category_values)),
+            "categories": category_values,
+            "evidence_ids": sorted({eid for values in provenance.values() for eid in values}),
+            "provenance": provenance,
+            "evaluations": evaluations,
+        }
+
     def evaluate(self, state: CognitiveState, action: Action, hits, *,
                  learn_layers: bool, adaptive_gate: bool,
                  prepared: PreparedEvidence | None = None) -> MeaningFrame:
