@@ -279,6 +279,62 @@ class MeaningInterpreter:
         integrated = sum(weights[m.axis] * m.value for m in meanings)
         return MeaningFrame(context, action.kind, tuple(meanings), weights, integrated, len(sources), examined_event_records)
 
+    def contextual_evidence(self, hits, features: frozenset[str], *,
+                            procedure: str, source: str, source_context: str,
+                            verified: bool, attention_cues: frozenset[str]) -> dict:
+        """Evaluate combined context, observed testimony and causal abstractions.
+
+        A correct procedure is never supplied here. Historical episodic evidence
+        remains accessible; the learner stores revisable aggregates of observed
+        outcomes with evidence provenance, not an answer table.
+        """
+        active = frozenset(c for c in attention_cues if c.startswith("pair:"))
+        if not active:
+            active = frozenset(c for c in features if c.startswith("pair:"))
+        abstraction = self.learner.contextual_support(active, procedure)
+        retrieved = []
+        evaluations = 0
+        for hit in hits:
+            events = self.memory.chunk_events(hit.chunk_id)
+            evaluations += len(events)
+            attempts = {e.event_id: e for e in events if e.kind == EventKind.ACTION}
+            for event in events:
+                if (event.kind != EventKind.OUTCOME or
+                        event.outcome not in ("success", "failure") or
+                        event.cause_event_id not in attempts):
+                    continue
+                attempt = attempts[event.cause_event_id]
+                if not attempt.action or attempt.action.target != procedure:
+                    continue
+                overlap = len(active & attempt.semantic_tags)
+                if overlap:
+                    retrieved.append((event.event_id,
+                                      1.0 if event.outcome == "success" else -1.0,
+                                      overlap / len(active)))
+        retrieved.sort(key=lambda x: x[0])
+        # Retrieved episodic outcomes have bounded influence and cannot
+        # overwhelm current observations simply by being repetitive.
+        history = retrieved[-8:]
+        episodic = (sum(value * overlap for _, value, overlap in history) /
+                    max(1, len(history))) if history else 0.0
+        reliability = (1.0 if verified else
+                       self.learner.source_reliability(source, source_context))
+        # Low trust reduces the influence of the unverified dependency report
+        # but cannot invert it into invented evidence.
+        testimony_weight = max(0.1, 2.0 * (reliability - .5))
+        score = (0.75 * abstraction["score"] + .25 * episodic) * testimony_weight
+        ids = sorted(set(abstraction["evidence_ids"]) |
+                     {event_id for event_id, _, _ in history})
+        return {"score": max(-1.0, min(1.0, score)),
+                "evidence_ids": ids,
+                "causal_evidence_ids": ids,
+                "provenance": {"contextual_outcomes": ids},
+                "covered_relations": abstraction["covered_relations"],
+                "source_reliability": reliability,
+                "evaluations": evaluations + len(history),
+                "hypothesis": procedure,
+                "verified": verified}
+
     def uncertainty_evidence(self, hits, features: frozenset[str], *,
                              context: str, invalidated_since: dict[str, float] | None = None,
                              review_depth: int = 0) -> dict:
