@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .experiment import run_experiments
+from .transfer import run_transfer_experiment
 from .models import RetrievalMode
 
 
@@ -15,12 +16,21 @@ def main() -> None:
     parser.add_argument("--distractors", type=int, default=1000, help="Distractor chunks inserted before Episode 4")
     parser.add_argument("--refinement", action="store_true",
                         help="Run bounded progressive thought refinement ablations")
+    parser.add_argument("--transfer", action="store_true", help="Run Experiment 6 category learning and stepwise transfer")
+    parser.add_argument("--rounds", type=int, default=4, help="Novel rounds in transfer benchmark")
     parser.add_argument("--meaning", action="store_true",
                         help="Run separate four-treatment learned meaning ablations")
     args = parser.parse_args()
 
     seeds = tuple(int(x.strip()) for x in args.seeds.split(",") if x.strip())
     modes = tuple(RetrievalMode(x.strip()) for x in args.modes.split(",") if x.strip())
+    if args.transfer:
+        payload = run_transfer_experiment(Path(args.output), seeds=seeds, rounds=args.rounds)
+        for name, summary in payload["conditions"].items():
+            print(f"{name}: completion={summary['completion_rate']:.2f} "
+                  f"actions={summary['mean_actions']:.2f} "
+                  f"initial_plans={summary['initial_plan_accuracy']:.2f}")
+        return
     payload = run_experiments(Path(args.output), seeds=seeds, modes=modes, distractor_count=args.distractors, include_meaning=args.meaning,
                               include_refinement=args.refinement)
     print(f"Wrote experiment outputs to {Path(args.output).resolve()}")
