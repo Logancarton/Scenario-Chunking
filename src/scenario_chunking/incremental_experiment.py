@@ -154,6 +154,8 @@ class IncrementalRun:
             content=observed.content, tags=observed.semantic_tags,
             outcome=observed.outcome, cause=attempt.event_id,
             reward=observed.reward, metadata=observed.metadata)
+        state.apply_signal(observed, event_id=outcome.event_id)
+        state.record_action(chosen)
         # Only observed execution feedback changes learned knowledge.
         update = self.learner.incremental_feedback(
             model_cues, chosen.target, success=observed.outcome == "success",
