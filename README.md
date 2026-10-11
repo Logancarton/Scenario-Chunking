@@ -281,3 +281,18 @@ these two missing episodes. It does **not** change the negative behavioral
 conclusion above: the spreading mode matched top-8 in actions while processing
 more detailed events and incurring greater latency. Its additional memory
 activations are not yet justified as the best action-selection policy.
+
+
+## Experiment 7 — Adaptive Reasoning Under Uncertainty (research branch)
+
+Implementation is limited to the independent Scenario-Chunking research system; Sonara production is unchanged. Run:
+
+```bash
+scenario-chunking --uncertainty --output results-uncertainty --seeds 7,23,61,101,149 --rounds 4 --action-budget 9
+```
+
+The four-choice `UncertaintyWorld` does not construct a correct proposed plan for the agent. The selector chooses each action from publicly visible options and receives explicit, costly causal feedback. Two mid-series changes invalidate a token relationship and swap prerequisite ordering. Source testimony is fallible; learned person-by-context reliability is calibrated only after subsequent verified outcomes. Blocked dependencies teach ordering without incorrectly punishing the proposed token.
+
+The active pathway reuses `MemoryRouter`, `EpisodicMemory`, `MeaningInterpreter`, `ActionSelector`, `ProgressiveRefiner` and `OutcomeLearner`. The refiner may request a costly instrument check, but does not gain invisible access to ground truth. The benchmark reports all seven main reasoning conditions plus larger retrieval, corrupted-testimony, category ablations and per-seed outcomes. See `results-uncertainty/uncertainty_summary.json` and `uncertainty_trials.json`.
+
+**Important limitations:** the underlying role tokens remain shared between training and transfer; these are not genuinely held-out causal *combinations*. Blocked-predecessor feedback explicitly names a prerequisite. The strong one-pass baseline is measured, but not strictly compute-matched with iterative reflection. Serialization restoration is verified in-process by the runner and independently in a focused subprocess test. A positive cognitive benefit must come from observed benchmark metrics, not from test passage or architecture presence.
