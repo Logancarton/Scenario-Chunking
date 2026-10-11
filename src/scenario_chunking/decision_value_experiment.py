@@ -176,7 +176,8 @@ class DecisionValueRun:
         self.learner.begin_episode()
         self.state = CognitiveState(f"heldout:{seed}", goal_id="temporal_decisions")
         self.public = world.public_constraints()
-        self.router = MemoryRouter(memory, RetrievalMode.STRUCTURAL, top_k=6)
+        self.router = MemoryRouter(memory, RetrievalMode.STRUCTURAL, top_k=6,
+                                   candidate_budget=32)
         self.refiner = ProgressiveRefiner(learner)
         self.interpreter = MeaningInterpreter(memory, learner)
         self.selector = ActionSelector(memory, learner, random.Random(seed),
@@ -311,6 +312,8 @@ class DecisionValueRun:
                 "presence": interpreted["presence"],
                 "thought_cost": self.thought_cost,
                 "clock_rule": self.mode == "time_triggered",
+                "one_pass_decision_value": self.mode in (
+                    "compute_matched_one_pass", "learned_focus_one_pass"),
             })
         if self.mode in ("compute_matched_one_pass", "empty_reflection"):
             # Actually recompute on the SAME evidence; never add fake votes.
