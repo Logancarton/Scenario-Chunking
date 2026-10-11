@@ -549,13 +549,29 @@ class ProgressiveRefiner:
             for _, a, _, _ in scored
         }
         best = min(scored, key=lambda row: (-assessed[row[1].label], row[1].label))
-        thread = self.thread(state)
+        # Concept identity persists across unique episodes, while the working
+        # CognitiveState and its observations remain episode-specific.
+        concept_id = self.learner.incremental_concept_id(state.context_cues)
+        key = (concept_id, state.goal_id)
+        if key not in self.threads:
+            self.threads[key] = ThoughtThread(
+                thought_id=concept_id, initiating_episode=state.episode_id,
+                initiating_goal=state.goal_id)
+        thread = self.threads[key]
+        previous = thread.versions[-1] if thread.versions else None
+        current_context = tuple(sorted(self.learner._incremental_axes(state.context_cues)))
+        previous_context = (
+            tuple(previous.hypotheses[0]["context"]) if previous and
+            previous.hypotheses else ())
+        unchanged = sorted(set(previous_context) & set(current_context))
+        differences = sorted(set(previous_context) ^ set(current_context))
         self._focus(thread, state.current_time)
         evidence = tuple(sorted(set(
             eid for data in predictions.values() for eid in data["evidence_ids"])))
-        signature = (state.episode_id, best[1].label, evidence,
-                     tuple((key, round(value, 4)) for key, value in sorted(assessed.items())))
-        changed = not thread.versions or thread.versions[-1].signature != signature
+        signature = (best[1].label, current_context, evidence,
+                     tuple((name, round(pred["probability"], 6))
+                           for name, pred in sorted(predictions.items())))
+        changed = previous is None or previous.signature != signature
         if changed and len(thread.versions) < self.max_versions:
             thread.versions.append(ThoughtVersion(
                 number=len(thread.versions) + 1,
@@ -569,12 +585,18 @@ class ProgressiveRefiner:
                 signature=signature, time=state.current_time,
                 predicted_outcomes=tuple(sorted(
                     (key, v["probability"]) for key, v in predictions.items())),
+                hypotheses=({"context": list(current_context),
+                             "unchanged": unchanged,
+                             "changed": differences},),
             ))
         ordered = [(max(row[0] for row in scored) + 1, best[1],
                     best[2] + ["incremental_value_refinement"], best[3])] + [
                         row for row in direct if row[1].label != best[1].label]
         return ordered, {
             "thought_id": thread.thought_id,
+            "reused_identity": previous is not None,
+            "previous_version": previous.number if previous else None,
+            "unchanged_context": unchanged, "changed_context": differences,
             "changed": changed, "version": len(thread.versions),
             "reasoning_cycles": 2,
             "meaningfully_changed_action": best[1] != direct[0][1],
@@ -750,7 +772,10 @@ class ProgressiveRefiner:
                  outcome_event_ids: tuple[str, ...]) -> None:
         if not decision.thought_trace:
             return
-        thread = self.thread(state)
+        thought_id = decision.thought_trace["thought_id"]
+        thread = self.threads.get((thought_id, state.goal_id))
+        if thread is None:
+            thread = self.thread(state)
         thread.outcomes.append({
             "version": decision.thought_trace["version"],
             "action": decision.action.label, "predicted": decision.predicted_success,

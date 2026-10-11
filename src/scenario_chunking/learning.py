@@ -60,7 +60,76 @@ class OutcomeLearner:
         self.temporal_samples: dict[str, dict[str, tuple[float | None, float | None, float]]] = defaultdict(dict)
         self.temporal_sources: dict[tuple[str, str], list[tuple[float, bool]]] = defaultdict(list)
 
-    def incremental_prediction(self, cues: frozenset[str], procedure: str) -> dict:
+    @staticmethod
+    def incremental_scope(cues: frozenset[str]) -> str | None:
+        """Stable conceptual address, excluding incidental scenario identities."""
+        domains = sorted(c for c in cues if c.startswith("pair:domain:"))
+        epochs = sorted(c for c in cues if c.startswith("pair:epoch:"))
+        if len(domains) != 1 or len(epochs) != 1:
+            return None
+        return domains[0] + "&" + epochs[0]
+
+    def incremental_concept_id(self, cues: frozenset[str]) -> str:
+        scope = self.incremental_scope(cues)
+        if scope is None:
+            raise ValueError("conceptual continuity requires a unique domain and epoch")
+        return "concept:response_dispatch:" + scope
+
+    @staticmethod
+    def _incremental_axes(cues: frozenset[str]) -> list[str]:
+        """Only independently observed axes; ignore markers and derived conjunctions."""
+        return sorted(
+            c for c in cues if c.startswith("pair:")
+            and "&" not in c and not c.startswith(
+                ("pair:domain:", "pair:epoch:", "pair:marker:"))
+        )
+
+    def incremental_prediction(self, cues: frozenset[str], procedure: str, *,
+                               allow_interactions: bool = True) -> dict:
+        """Address a continuing contextual belief, not a separate belief per episode.
+
+        E11's domain/epoch anchor prevents unrelated regimes changing predictions.
+        The historical E6 contextual estimator remains unchanged for other users.
+        """
+        scope = self.incremental_scope(cues)
+        if scope is None:
+            return self._legacy_incremental_prediction(cues, procedure)
+        yes, no = self.context_counts.get((scope, procedure), (0.0, 0.0))
+        support = yes + no
+        base = (yes + 1.0) / (support + 2.0)
+        logit_base = math.log(base / (1.0 - base))
+        evidence = set(self.context_evidence_ids.get((scope, procedure), ()))
+        effects = []
+        if allow_interactions:
+            for axis in self._incremental_axes(cues):
+                key = scope + "&" + axis
+                positive, negative = self.context_counts.get((key, procedure), (0.0, 0.0))
+                n = positive + negative
+                if n <= 0:
+                    continue
+                local = (positive + 1.0) / (n + 2.0)
+                shrink = n / (n + 3.0)
+                effect = shrink * (math.log(local / (1.0 - local)) - logit_base)
+                effects.append((effect, shrink, key))
+                evidence.update(self.context_evidence_ids.get((key, procedure), ()))
+        # Average correlated associations: no additive vote from five co-occurring
+        # axes, and no unearned certainty from generating 36 feature conjunctions.
+        correction = (sum(effect for effect, _, _ in effects) /
+                      max(1.0, sum(weight for _, weight, _ in effects)))
+        probability = 1.0 / (1.0 + math.exp(
+            -max(-4.0, min(4.0, logit_base + correction))))
+        uncertainty = 1.0 / (1.0 + support / 3.0 +
+                             sum(weight for _, weight, _ in effects) / 5.0)
+        return {
+            "probability": probability, "uncertainty": uncertainty,
+            "evidence_ids": sorted(evidence),
+            "covered_relations": len(effects),
+            "relation_effects": {key: delta for delta, _, key in effects},
+            "belief_id": self.incremental_concept_id(cues) + ":" + procedure,
+            "effective_support": support,
+        }
+
+    def _legacy_incremental_prediction(self, cues: frozenset[str], procedure: str) -> dict:
         """Conditional success belief from observed attempts, not episodic lookup.
 
         Reuses the E6 contextual association tables and evidence provenance.
@@ -103,7 +172,60 @@ class OutcomeLearner:
         }
 
     def incremental_feedback(self, cues: frozenset[str], procedure: str, *,
-                             success: bool, evidence_id: str, weight: float = 1.0) -> dict:
+                             success: bool, evidence_id: str, weight: float = 1.0,
+                             allow_interactions: bool = True) -> dict:
+        """One observed outcome, at most one total unit of contextual credit.
+
+        A domain/epoch receives half the evidence mass and its observed axes
+        divide the other half. Counts and provenance remain in OutcomeLearner;
+        full historical event records stay exclusively in EpisodicMemory.
+        """
+        if not 0.0 < weight <= 1.0:
+            raise ValueError("feedback weight must lie in (0, 1]")
+        scope = self.incremental_scope(cues)
+        if scope is None:
+            return self._legacy_incremental_feedback(
+                cues, procedure, success=success, evidence_id=evidence_id, weight=weight)
+        prior = self.incremental_prediction(
+            cues, procedure, allow_interactions=allow_interactions)
+        if not self.enabled:
+            return {"updated": [], "prediction_error":
+                    float(success) - prior["probability"],
+                    "belief_id": prior["belief_id"], "evidence_id": evidence_id}
+        axes = self._incremental_axes(cues) if allow_interactions else []
+        # Only one outcome's worth of evidence is ever credited, irrespective
+        # of how many attributes co-occurred. No oracle feature importance.
+        shares = [(scope, weight * (0.5 if axes else 1.0))]
+        shares.extend((scope + "&" + axis, weight * 0.5 / len(axes))
+                      for axis in axes)
+        updated = []
+        for key, share in shares:
+            old = self.context_counts.get((key, procedure), (0.0, 0.0))
+            current = [old[0] + share * int(success),
+                       old[1] + share * int(not success)]
+            self.context_counts[(key, procedure)] = current
+            ids = self.context_evidence_ids[(key, procedure)]
+            if evidence_id not in ids:
+                ids.append(evidence_id)
+                del ids[:-24]
+            updated.append(key)
+        # This action's generic E6 base is not used to address E11 concepts:
+        # an outcome in an unrelated domain must not shift another concept.
+        posterior = self.incremental_prediction(
+            cues, procedure, allow_interactions=allow_interactions)
+        return {
+            "updated": updated, "prediction_error":
+                float(success) - prior["probability"],
+            "belief_id": prior["belief_id"],
+            "prior_probability": prior["probability"],
+            "posterior_probability": posterior["probability"],
+            "evidence_id": evidence_id,
+            "total_credit_mass": sum(share for _, share in shares),
+        }
+
+    def _legacy_incremental_feedback(self, cues: frozenset[str], procedure: str, *,
+                                     success: bool, evidence_id: str,
+                                     weight: float = 1.0) -> dict:
         """One causal feedback item updates only its matching conditional keys."""
         if not 0.0 < weight <= 1.0:
             raise ValueError("feedback weight must lie in (0, 1]")

@@ -73,7 +73,8 @@ class MeaningInterpreter:
     def incremental_action_values(self, cues: frozenset[str], actions: list[Action],
                                   *, success_reward: float = 1.0,
                                   failure_loss: float = 1.0,
-                                  costs: dict[str, float] | None = None) -> dict:
+                                  costs: dict[str, float] | None = None,
+                                  allow_interactions: bool = True) -> dict:
         """Translate the one learner's conditional beliefs to action values."""
         costs = costs or {}
         predictions = {}
@@ -81,7 +82,8 @@ class MeaningInterpreter:
         provenance = {}
         for action in actions:
             procedure = action.target or action.kind
-            belief = self.learner.incremental_prediction(cues, procedure)
+            belief = self.learner.incremental_prediction(
+                cues, procedure, allow_interactions=allow_interactions)
             p = belief["probability"]
             predictions[action.label] = belief
             values[action.label] = (

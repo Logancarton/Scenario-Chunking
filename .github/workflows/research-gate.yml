@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/incremental-refinement-e11-continuity", "main"]
   pull_request:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected", "experiment/predictive-decision-value-e10"]
   workflow_dispatch:
@@ -29,6 +29,13 @@ jobs:
           from scenario_chunking.incremental_experiment import write_incremental_benchmark
           p = write_incremental_benchmark(seeds=(7, 23, 61, 101, 149))
           assert len(p["trials"]) == 5 * 3 * 32 * 5
+          assert len(p["frozen_trials"]) == 5 * 3 * 8 * 5
+          assert p["frozen_training_protocol"]["same_interventions_across_treatments"]
+          assert p["frozen_training_protocol"]["each_heldout_case_from_identical_pretest_snapshot"]
+          for condition, stages in p["frozen_summary"].items():
+              print("E11_FROZEN_CONDITION", condition, stages)
+          for row in p["frozen_paired_seed_deltas"]:
+              print("E11_FROZEN_PAIRED_SEED", row)
           for condition, stages in p["summary"].items():
               print("E11_CONDITION", condition, stages)
           for row in p["paired_seed_deltas"]:
