@@ -371,7 +371,8 @@ class UncertaintyRun(TransferRun):
                 if decision.thought_trace is not None:
                     self.refiner.feedback(
                         state, decision, outcome=(
-                            "success" if status == "success" else "failure"),
+                            "success" if status == "success" else
+                            "failure" if status == "failure" else None),
                         outcome_event_ids=(result_id,),
                     )
                 attempts += 1
