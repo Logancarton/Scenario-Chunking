@@ -27,6 +27,16 @@ def main() -> None:
 
     seeds = tuple(int(x.strip()) for x in args.seeds.split(",") if x.strip())
     modes = tuple(RetrievalMode(x.strip()) for x in args.modes.split(",") if x.strip())
+    if args.uncertainty:
+        payload = run_uncertainty_experiment(
+            Path(args.output), seeds=seeds, rounds=args.rounds,
+            distractors=args.distractors, action_budget=args.action_budget)
+        for name, summary in payload["conditions"].items():
+            print(f"{name}: completion={summary['completion_rate']:.2f} "
+                  f"actions={summary['mean_actions']:.2f} "
+                  f"first={summary['first_action_accuracy']:.2f}")
+        print("VERDICT:", payload["verdict"])
+        return
     if args.transfer:
         payload = run_transfer_experiment(Path(args.output), seeds=seeds, rounds=args.rounds)
         for name, summary in payload["conditions"].items():
