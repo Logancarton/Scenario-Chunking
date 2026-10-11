@@ -4,7 +4,7 @@ on:
   push:
     branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "main"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "experiment/cognitive-scaling-e8-corrected"]
   workflow_dispatch:
 
 jobs:
