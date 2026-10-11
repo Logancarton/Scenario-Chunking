@@ -314,6 +314,39 @@ class UncertaintyRun(TransferRun):
         state.current_prerequisites.setdefault(action.key_name, set()).add(missing)
         return result.event_id
 
+    def _state(self, episode: str):
+        state = super()._state(episode)
+        # Reconstruct applicable inspected sequence evidence from episodic
+        # memory on later rounds, rather than a runner-local knowledge cache.
+        if "sequence" in state.invalidated_since:
+            from .models import RetrievalMode, RetrievalQuery
+            from .retrieval import MemoryRouter
+            query = RetrievalQuery(
+                goal_id="workshop_recovery",
+                semantic_tags=frozenset({
+                    "goal:workshop_recovery", "axis:sequence",
+                    "source:current_protocol"}),
+                current_time=self.clock)
+            hits, stats = MemoryRouter(
+                self.memory, RetrievalMode.STRUCTURAL, top_k=16).retrieve(query)
+            self.cost["header_evaluations"] += stats.header_evaluations
+            self.cost["detail_events"] += stats.active_detail_events
+            self.cost["retrieval_ms"] += stats.latency_ms
+            cutoff = state.invalidated_since["sequence"]
+            for hit in hits:
+                for event in self.memory.chunk_events(hit.chunk_id):
+                    if (event.kind == EventKind.OBSERVATION and
+                            event.occurrence_time >= cutoff and
+                            event.metadata.get("source_status") ==
+                            "current_dependency_graph"):
+                        graph = event.metadata.get("current_dependencies", {})
+                        for dependent, before in graph.items():
+                            if dependent in AXES and before in AXES:
+                                state.current_prerequisites.setdefault(
+                                    dependent, set()).add(before)
+                        self._resolved_change_axes.add("sequence")
+        return state
+
     def _execute_round(self, round_no: int) -> dict:
         self._revision_notice(round_no)
         scene = self.world.scene(self.seed, round_no)
