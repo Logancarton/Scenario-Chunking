@@ -257,7 +257,10 @@ def run_temporal_benchmark(*, seeds=(7, 23, 61, 101, 149)) -> dict:
                     subject=f"person-{seed}", promised_duration=10,
                     actual_arrival_at=actual, observation_available=available,
                     timestamp_available=timestamp)
-                run = TemporalResearchRun(mode=mode, seed=seed, learner=learner)
+                # Held-out feedback must never contaminate another trial.
+                # Fork only after the identical training observations.
+                frozen_learner = pickle.loads(pickle.dumps(learner))
+                run = TemporalResearchRun(mode=mode, seed=seed, learner=frozen_learner)
                 run.start(world, f"heldout-{seed}-{case}")
                 idle = run.advance(5.0)
                 assert not idle
