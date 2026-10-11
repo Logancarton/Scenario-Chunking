@@ -7,6 +7,10 @@ on:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected"]
   workflow_dispatch:
 
+concurrency:
+  group: scenario-research-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   predictive-temporal-replication:
     runs-on: ubuntu-latest
