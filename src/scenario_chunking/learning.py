@@ -70,7 +70,7 @@ class OutcomeLearner:
         return estimated, (1.0 + on_time) / (2.0 + on_time + late)
 
     def learn_temporal_observation(self, expectation, *, observed_at: float,
-                                   returned: bool) -> None:
+                                   returned: bool, arrival_at: float | None = None) -> None:
         """Learn punctuality once from direct evidence; learn delay on arrival.
 
         An initial witnessed absence can be followed by a witnessed late
@@ -81,15 +81,16 @@ class OutcomeLearner:
         context = expectation.context
         identity = expectation.expectation_id
         if identity not in self.temporal_assessed and (
-                returned or observed_at >= expectation.due_at):
-            if returned and observed_at <= expectation.due_at:
+                (returned and arrival_at is not None)
+                or (not returned and observed_at >= expectation.due_at)):
+            if returned and arrival_at is not None and arrival_at <= expectation.due_at:
                 self.temporal_punctuality[context][0] += 1.0
             else:
                 self.temporal_punctuality[context][1] += 1.0
             self.temporal_assessed.add(identity)
-        if returned and identity not in self.temporal_arrivals:
+        if returned and arrival_at is not None and identity not in self.temporal_arrivals:
             promised = expectation.due_at - expectation.started_at
-            actual = observed_at - expectation.started_at
+            actual = arrival_at - expectation.started_at
             self.temporal_delay[context][0] += 1.0
             self.temporal_delay[context][1] += actual - promised
             self.temporal_arrivals.add(identity)
