@@ -281,7 +281,8 @@ class MeaningInterpreter:
 
     def contextual_evidence(self, hits, features: frozenset[str], *,
                             procedure: str, source: str, source_context: str,
-                            verified: bool, attention_cues: frozenset[str]) -> dict:
+                            verified: bool, attention_cues: frozenset[str],
+                            alternative_attention_cues: frozenset[str] | None = None) -> dict:
         """Evaluate combined context, observed testimony and causal abstractions.
 
         A correct procedure is never supplied here. Historical episodic evidence
@@ -319,11 +320,20 @@ class MeaningInterpreter:
                     max(1, len(history))) if history else 0.0
         reliability = (1.0 if verified else
                        self.learner.source_reliability(source, source_context))
-        # Low trust reduces confidence in the unverified dependency, but
-        # must not erase independent causal evidence about other dimensions.
-        testimony_weight = 0.5 + 0.5 * reliability
-        score = (0.75 * abstraction["score"] + .25 * episodic) * testimony_weight
+        # Unknown reports are *probabilistic claims*, not facts. Marginalize
+        # over publicly possible alternatives rather than reinforcing a wrong
+        # dependency merely because it was reported confidently.
+        alternative = (self.learner.contextual_support(
+            alternative_attention_cues, procedure)
+            if alternative_attention_cues is not None and not verified else None)
+        if alternative is None:
+            causal = abstraction["score"]
+        else:
+            causal = (reliability * abstraction["score"] +
+                      (1.0 - reliability) * alternative["score"])
+        score = 0.82 * causal + 0.18 * episodic
         ids = sorted(set(abstraction["evidence_ids"]) |
+                     set(alternative["evidence_ids"] if alternative else ()) |
                      {event_id for event_id, _, _ in history})
         return {"score": max(-1.0, min(1.0, score)),
                 "evidence_ids": ids,
@@ -331,6 +341,9 @@ class MeaningInterpreter:
                 "provenance": {"contextual_outcomes": ids},
                 "covered_relations": abstraction["covered_relations"],
                 "source_reliability": reliability,
+                "alternative_causal_score": (
+                    alternative["score"] if alternative is not None else None),
+                "reported_causal_score": abstraction["score"],
                 "evaluations": evaluations + len(history),
                 "hypothesis": procedure,
                 "verified": verified}
