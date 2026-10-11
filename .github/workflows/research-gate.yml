@@ -8,6 +8,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  temporal-focused-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Experiment 9 focused behavioral tests
+        run: python -m pytest -q tests/test_temporal.py
+      - name: Experiment 9 paired research smoke
+        run: |
+          python - <<'PY'
+          from scenario_chunking.temporal_experiment import write_temporal_benchmark
+          result = write_temporal_benchmark()
+          assert len(result["trials"]) == 100
+          assert not any(row["false_failure_claim"] for row in result["trials"])
+          print(result["summary"])
+          PY
+      - name: Compile temporal owners and tests
+        run: python -m compileall -q src tests
   research-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
