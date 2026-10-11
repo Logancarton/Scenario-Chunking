@@ -246,6 +246,13 @@ class CognitiveState:
         return frozenset(features)
 
     def retrieval_query(self) -> RetrievalQuery:
+        if self.goal_id == "response_dispatch":
+            return RetrievalQuery(
+                goal_id=self.goal_id,
+                semantic_tags=self.context_cues | frozenset({"goal:response_dispatch"}),
+                current_time=self.current_time,
+                desired_event_kinds=frozenset({EventKind.ACTION, EventKind.OUTCOME}),
+            )
         tags = {
             f"goal:{self.goal_id}",
             "role:locked_container",
