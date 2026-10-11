@@ -96,7 +96,8 @@ class ExplanationBank:
         fit = sum(math.log(1 - self.noise) if _holds(rule, c) == y else math.log(self.noise)
                   for c, y, _ in self.evidence)
         size = sum(len(t) for t in rule) + .5 * len(rule)
-        return fit - self.complexity_price * size
+        # Rounded so platform libm last-bit differences cannot reorder ties.
+        return round(fit - self.complexity_price * size, 9)
 
     def posterior(self) -> list[tuple[Rule, float]]:
         scored = [(rule, self.score(rule)) for rule in self.beam]
@@ -273,7 +274,7 @@ class OutcomeLearner:
                     "hypotheses": [], "explanation": None, "scope": list(key[0]),
                     "hypotheses_examined": 0}
         posterior = bank.posterior()
-        q = sum(w for rule, w in posterior if _holds(rule, literals))
+        q = round(sum(w for rule, w in posterior if _holds(rule, literals)), 9)
         p = (1 - bank.noise) * q + bank.noise * (1 - q)
         best = [bank.trace(rule, w) for rule, w in posterior[:3]]
         return {"probability": p,
