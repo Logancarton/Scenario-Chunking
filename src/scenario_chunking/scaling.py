@@ -18,7 +18,7 @@ from .environment import ContextualWorld
 from .models import Action, EventKind, TruthStatus, RetrievalQuery
 from .state import TransferState
 from .policy import ActionSelector
-from .uncertainty import UncertaintyRun
+from .transfer import TransferRun
 
 CONDITIONS_8 = {
     "untrained_structural": "untrained_structural",
@@ -38,7 +38,7 @@ DEFAULT_MEMORY = (100, 1000, 5000, 20000)
 DEFAULT_COMPLEXITIES = (1, 2, 3)
 
 
-class ScalingRun(UncertaintyRun):
+class ScalingRun(TransferRun):
     """The existing cognitive owners operate in one fully contextual task."""
 
     def __init__(self, seed: int, treatment: str, *, rounds: int = 4,
@@ -47,8 +47,11 @@ class ScalingRun(UncertaintyRun):
             raise ValueError(f"unknown Experiment 8 treatment: {treatment}")
         if candidate_budget < 8:
             raise ValueError("candidate budget must allow causal comparisons")
-        super().__init__(seed, CONDITIONS_8[treatment], rounds=rounds,
-                         distractors=0, action_budget=action_budget)
+        parent_condition = CONDITIONS_8[treatment]
+        if parent_condition in ("larger_retrieval", "shuffled_evidence"):
+            parent_condition = "full_no_reflection"
+        super().__init__(seed, parent_condition, rounds=rounds, distractors=0)
+        self.action_budget = action_budget
         self.world = ContextualWorld(seed)
         self.treatment = treatment
         self.experiences = 0
@@ -60,6 +63,12 @@ class ScalingRun(UncertaintyRun):
             else candidate_budget)
         # Identical action affordances, training data and public contexts across
         # all trained treatments. Only the cognition mechanism is ablated.
+
+    def run(self, *, experiences: int = 100, memory_target: int = 100,
+            complexity: int = 2) -> dict:
+        """Run one verified E8 research path, never an inherited E6/E7 runner."""
+        self.add_experiences(experiences)
+        return self.heldout(0, memory_target, complexity=complexity)
 
     def _attempt(self, task, procedure: str, *, episode: str, step: int,
                  dependency: str, context_cues: frozenset[str],
