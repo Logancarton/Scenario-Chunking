@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "main"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -205,8 +205,8 @@ jobs:
       - name: Experiment 8 small end-to-end research gate
         run: |
           scenario-chunking --scaling --output results-scaling \
-            --seeds 7 --rounds 2 --action-budget 9 \
-            --training-stages 20,100 --memory-stages 100,500 \
+            --seeds 7 --rounds 2 --scaling-action-budget 3 \
+            --training-stages 20,100 --memory-stages 50,100 --complexities 1,3 \
             --scaling-conditions untrained_structural,strong_one_pass,adaptive_focus,bounded_without_learned_focus \
             --candidate-budget 32
           python - <<'PY'
@@ -215,10 +215,10 @@ jobs:
           p = json.loads(Path("results-scaling/scaling_summary.json").read_text())
           trials = json.loads(Path("results-scaling/scaling_trials.json").read_text())
           assert p["experiment"] == 8
-          assert len(trials) == 8
+          assert len(trials) == 32
           assert set(p["stage_results"]) == {"20", "100"}
           assert all(0 <= r["completion_rate"] <= 1 for r in trials)
-          assert all(r["mean_header_evaluations"] <= 32 for r in trials if r["treatment"] in ("adaptive_focus", "bounded_without_learned_focus"))
+          assert all(r["mean_header_evaluations"] <= 32 for r in trials if r["treatment"] != "larger_retrieval")
           print("Experiment 8 smoke:", json.dumps(p["paired_focus_vs_onepass"], sort_keys=True))
           PY
       - name: Upload measured results
