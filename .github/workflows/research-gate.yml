@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "main"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -177,6 +177,29 @@ jobs:
           print("ABLATIONS=" + json.dumps(p["ablations"], sort_keys=True))
           print("VERDICT=" + json.dumps(p["verdict"], sort_keys=True))
           PY
+      - name: Experiment 7 focused cognitive tests
+        run: python -m pytest -q tests/test_uncertainty.py
+      - name: Experiment 7 five-seed uncertainty challenge
+        run: scenario-chunking --uncertainty --output results-uncertainty --seeds 7,23,61,101,149 --rounds 4 --distractors 4 --action-budget 9
+      - name: Verify Experiment 7 matched comparisons without assuming success
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path("results-uncertainty/uncertainty_summary.json").read_text())
+          assert p["experiment"] == 7
+          assert len(p["seeds"]) == 5
+          assert len(p["conditions"]) == 9
+          assert len(p["ablations"]) == 5
+          assert all(x["restarts_preserved"] for x in p["conditions"].values())
+          for name, metrics in p["conditions"].items():
+              assert 0 <= metrics["completion_rate"] <= 1
+              assert len(metrics["round_completion"]) == 4
+              assert len(metrics["by_seed"]) == 5
+              print("UNCERTAINTY " + name + " " + json.dumps(metrics, sort_keys=True))
+          print("UNCERTAINTY_ABLATIONS=" + json.dumps(p["ablations"], sort_keys=True))
+          print("UNCERTAINTY_VERDICT=" + json.dumps(p["verdict"], sort_keys=True))
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
@@ -186,4 +209,5 @@ jobs:
             results/
             results-refinement/
             results-transfer/
+            results-uncertainty/
           if-no-files-found: ignore
