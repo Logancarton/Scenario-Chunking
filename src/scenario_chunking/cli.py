@@ -29,6 +29,8 @@ def main() -> None:
     parser.add_argument("--candidate-budget", type=int, default=48)
     parser.add_argument("--action-budget", type=int, default=9, help="Maximum actions per Experiment 7 novel task")
     parser.add_argument("--rounds", type=int, default=4, help="Novel rounds in transfer benchmark")
+    parser.add_argument("--activation", action="store_true",
+                        help="Include experimental working-memory treatment")
     parser.add_argument("--meaning", action="store_true",
                         help="Run separate four-treatment learned meaning ablations")
     args = parser.parse_args()
@@ -68,6 +70,8 @@ def main() -> None:
                   f"actions={summary['mean_actions']:.2f} "
                   f"initial_plans={summary['initial_plan_accuracy']:.2f}")
         return
+    if args.activation and RetrievalMode.ACTIVATION not in modes:
+        modes += (RetrievalMode.ACTIVATION,)
     payload = run_experiments(Path(args.output), seeds=seeds, modes=modes, distractor_count=args.distractors, include_meaning=args.meaning,
                               include_refinement=args.refinement)
     print(f"Wrote experiment outputs to {Path(args.output).resolve()}")

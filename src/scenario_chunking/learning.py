@@ -394,6 +394,9 @@ class OutcomeLearner:
         # E12 treatment switches for newly created explanation banks; empty is
         # the original E12 learner. Set once, before any experience.
         self.explanation_options: dict[str, object] = {}
+        # Learned accessibility remains distinct from evidence truth and validity.
+        self.activation_persistence: dict[str, float] = defaultdict(float)
+        self.activation_updates: list[dict[str, object]] = []
         # E10 sufficient statistics: a direct arrival or a right-censored interval.
         self.temporal_samples: dict[str, dict[str, tuple[float | None, float | None, float]]] = defaultdict(dict)
         self.temporal_sources: dict[tuple[str, str], list[tuple[float, bool]]] = defaultdict(list)
@@ -1024,6 +1027,17 @@ class OutcomeLearner:
                 blocked = supported = 0.0
             return (2.0 if axis in invalidated else 0.0) + supported - blocked, axis
         return tuple(sorted(remaining, key=lambda axis: (-priority(axis)[0], axis))[:limit])
+
+    def learn_activation_persistence(self, source_ids: list[str], *, beneficial: bool, observed: bool) -> None:
+        """Credit only used evidence after an observed outcome or information gain."""
+        if not self.enabled or not observed:
+            return
+        for cid in dict.fromkeys(source_ids):
+            before = self.activation_persistence[cid]
+            after = max(-1.1, min(1.1, before + (0.17 if beneficial else -0.22)))
+            self.activation_persistence[cid] = after
+            self.activation_updates.append({"chunk_id": cid, "beneficial": beneficial,
+                                            "before": before, "after": after})
 
     def begin_episode(self) -> None:
         self.episode_trace = []

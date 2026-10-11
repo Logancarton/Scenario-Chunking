@@ -25,6 +25,7 @@ class RetrievalMode(str, Enum):
     RECENCY = "recency"
     STRUCTURAL = "structural"
     SPREADING = "spreading"
+    ACTIVATION = "activation"
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,7 @@ class SelectionDecision:
     meaning_frame: Any = None
     interpretation_event_evaluations: int = 0
     thought_trace: Any = None
+    used_chunk_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
