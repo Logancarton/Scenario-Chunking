@@ -188,6 +188,7 @@ class DecisionValueRun:
         self.computation = 0
         self.changes = 0
         self.inspections = 0
+        self.unavailable_inspections = 0
         self.missed_opportunity = 0
         for signal in world.promises():
             event = _store(memory, self.state, signal)
@@ -334,7 +335,10 @@ class DecisionValueRun:
             self.state.beliefs.get("temporal_dependencies", {}).items()})
         if chosen.kind == "check":
             self.inspections += 1
-            self._receive(self.world.inspect(chosen.target))
+            sensed = self.world.inspect(chosen.target)
+            self.unavailable_inspections += int(
+                sensed.metadata.get("source_status") == "unavailable")
+            self._receive(sensed)
         if chosen.kind not in ("wait",):
             self.state.record_action(chosen)
         if chosen.kind == "proceed":
@@ -375,9 +379,7 @@ class DecisionValueRun:
             "success": any(row["action"].startswith("proceed:")
                            and row["reward"] > 0 for row in self.history),
             "actions": len(self.history), "inspections": self.inspections,
-            "unnecessary_actions": sum(row["action"].startswith("check:")
-                                      and self.world.reward < 0
-                                      for row in self.history),
+            "unnecessary_inspections": self.unavailable_inspections,
             "missed_opportunities": self.missed_opportunity,
             "refinement_action_changes": self.changes,
             "cognitive_operations": self.computation,
@@ -388,6 +390,33 @@ class DecisionValueRun:
                                 if self.mode in ("predictive_value", "time_triggered") else 0,
             "trace": self.history,
         }
+
+
+def evaluate_heldout_trace(world: TemporalDecisionWorld, result: dict,
+                           learner_at_start: OutcomeLearner) -> dict:
+    """Offline-only oracle measurement. Never passed back into cognition."""
+    brier = []
+    mae = []
+    for row in result["trace"]:
+        now = row["time"]
+        for person, p in row["presence_prediction"].items():
+            truth = world._deliveries[person]
+            observed_truth = (truth.arrival_at is not None
+                              and truth.arrival_at <= now)
+            brier.append((p - float(observed_truth)) ** 2)
+    for person, truth in world._deliveries.items():
+        if truth.arrival_at is not None:
+            predicted, _ = learner_at_start.temporal_prediction(
+                truth.context, truth.promised)
+            mae.append(abs(truth.arrival_at - predicted))
+    any_viable = any(d.arrival_at is not None and d.arrival_at <= d.deadline
+                     for d in world._deliveries.values())
+    proved = bool(result["success"])
+    return {
+        "presence_brier": statistics.mean(brier) if brier else None,
+        "forecast_mae": statistics.mean(mae) if mae else None,
+        "missed_opportunities": int(any_viable and not proved),
+    }
 
 
 def run_decision_value_benchmark(*, seeds=tuple(range(30)),
@@ -409,7 +438,13 @@ def run_decision_value_benchmark(*, seeds=tuple(range(30)),
                     run = DecisionValueRun(
                         world, mode=mode, seed=seed * 101 + case,
                         learner=learner, memory=deepcopy(learned_memory))
+                    calibration_prior = deepcopy(learner)
                     outcome = run.run()
+                    outcome.update(evaluate_heldout_trace(
+                        world, outcome, calibration_prior))
+                    outcome["false_failure_claims"] = sum(
+                        e.status == "verified_absent" and not e.observation_ids
+                        for e in run.state.timed_expectations.values())
                     outcome.update(seed=seed, stage=stage, case=case)
                     trials.append(outcome)
     summary = {}
@@ -422,16 +457,48 @@ def run_decision_value_benchmark(*, seeds=tuple(range(30)),
                 "mean_reward": statistics.mean(t["reward"] for t in group),
                 "mean_actions": statistics.mean(t["actions"] for t in group),
                 "mean_inspections": statistics.mean(t["inspections"] for t in group),
+                "mean_unnecessary_inspections": statistics.mean(
+                    t["unnecessary_inspections"] for t in group),
+                "mean_missed_opportunities": statistics.mean(
+                    t["missed_opportunities"] for t in group),
+                "presence_brier": statistics.mean(t["presence_brier"] for t in group
+                                                   if t["presence_brier"] is not None),
+                "forecast_mae": statistics.mean(t["forecast_mae"] for t in group
+                                                if t["forecast_mae"] is not None),
+                "false_failure_claims": sum(t["false_failure_claims"] for t in group),
                 "mean_cognitive_operations": statistics.mean(t["cognitive_operations"] for t in group),
                 "mean_header_evaluations": statistics.mean(t["header_evaluations"] for t in group),
                 "mean_details": statistics.mean(t["detail_events"] for t in group),
                 "mean_latency_ms": statistics.mean(t["latency_ms"] for t in group),
                 "refinement_changes": sum(t["refinement_action_changes"] for t in group),
             }
+    comparisons = {}
+    for stage in training_stages:
+        seed_deltas = []
+        for seed in seeds:
+            full = [t["reward"] for t in trials if
+                    t["stage"] == stage and t["seed"] == seed
+                    and t["mode"] == "predictive_value"]
+            onepass = [t["reward"] for t in trials if
+                       t["stage"] == stage and t["seed"] == seed
+                       and t["mode"] == "compute_matched_one_pass"]
+            if full and onepass:
+                seed_deltas.append(statistics.mean(full) - statistics.mean(onepass))
+        if seed_deltas:
+            mean_delta = statistics.mean(seed_deltas)
+            se = (statistics.stdev(seed_deltas) / len(seed_deltas) ** .5
+                  if len(seed_deltas) > 1 else 0.0)
+            comparisons[str(stage)] = {
+                "mean_reward_delta_vs_compute_matched": mean_delta,
+                "approx_95pct_cluster_interval": [mean_delta - 1.96 * se,
+                                                    mean_delta + 1.96 * se],
+                "independent_seeds": len(seed_deltas),
+            }
     return {"experiment": 10, "seeds": list(seeds),
             "training_stages": list(training_stages),
             "cases": list(cases), "conditions": list(CONDITIONS),
             "trials": trials, "summary": summary,
+            "paired_comparisons": comparisons,
             "limitation": ("Synthetic reward is not human cognition. "
                            "Paired end-to-end rewards do not isolate causal "
                            "effects of individual thought revisions.")}
