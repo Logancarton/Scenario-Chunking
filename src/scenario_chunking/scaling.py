@@ -176,7 +176,8 @@ class ScalingRun(UncertaintyRun):
         public = task.public()
         cues = self.world.relational_cues(public, dependency=dependency)
         learned_focus = self.treatment in ("adaptive_focus", "learned_focus_one_pass")
-        if self.treatment in ("adaptive_focus", "bounded_without_learned_focus"):
+        if self.treatment in ("adaptive_focus", "learned_focus_one_pass",
+                               "bounded_without_learned_focus"):
             focus = self.learner.select_context_focus(
                 cues, learned=learned_focus, budget=2) if learned_focus else frozenset(
                 c for c in cues if c.startswith("pair:"))
