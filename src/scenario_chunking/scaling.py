@@ -82,8 +82,9 @@ class ScalingRun(UncertaintyRun):
         self.memory.create_chunk(
             events=[event, outcome], transition_reason="observed_contextual_feedback",
             self_relevance=task.self_relevance, salience=task.consequence)
-        self.learner.register_action(event.event_id, frozenset(tags),
-                                     used_evidence_ids=used_evidence_ids)
+        self.learner.register_action(
+            event.event_id, frozenset({"action:contextual_trial"}),
+            used_evidence_ids=used_evidence_ids)
         # Keep the existing action-credit owner active; contextual statistics
         # are an additional interpretation of that very same observed outcome.
         if accepted:
@@ -150,6 +151,7 @@ class ScalingRun(UncertaintyRun):
         self.memory.inject_distractors(
             count - misleading, start_time=self.clock + 1,
             goal_id="unrelated_goal")
+        self.clock += 2 + .001 * (count - misleading)
 
     def _public_observation(self, task, episode: str) -> None:
         public = task.public()
@@ -442,11 +444,15 @@ def run_scaling_experiment(
                   for r in trials if r["stage"] == stage and r["treatment"] == "adaptive_focus"}
             b = { (r["seed"], r["complexity"], r["memory_target"]): r
                   for r in trials if r["stage"] == stage and r["treatment"] == "strong_one_pass"}
-            deltas = [a[key]["completion_rate"] - b[key]["completion_rate"]
-                      for key in sorted(a)]
+            deltas = defaultdict(list)
+            for key in sorted(a):
+                deltas[key[0]].append(
+                    a[key]["completion_rate"] - b[key]["completion_rate"])
+            seed_deltas = {seed: statistics.mean(values)
+                           for seed, values in sorted(deltas.items())}
             paired[str(checkpoint)] = {
-                "matched_deltas": deltas,
-                "bootstrap_95_interval": _paired_interval(deltas),
+                "by_seed": seed_deltas,
+                "bootstrap_95_interval": _paired_interval(list(seed_deltas.values())),
             }
     payload = {
         "experiment": 8, "design": "factorial_shared_heldout_context",
