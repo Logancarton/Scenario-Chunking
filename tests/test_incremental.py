@@ -127,3 +127,41 @@ def test_matched_prequential_research_and_ablation_no_leakage():
     # Held-out predictions are scored before each unique execution.
     assert all(r["index"] >= 24 for r in report["trials"]
                if r["stage"] == "heldout")
+
+
+def test_irrelevant_marker_does_not_change_private_causal_truth():
+    factors = {"person": "Jordan", "delay": "long", "urgency": "high",
+               "capacity": "open", "channel": "night", "marker": "blue"}
+    blue = IncrementalDispatchWorld.scenario(
+        seed=23, family="delivery", index=19, factors=factors, epoch=0)
+    orange = IncrementalDispatchWorld.scenario(
+        seed=23, family="delivery", index=19,
+        factors={**factors, "marker": "orange"}, epoch=0)
+    assert blue._outcomes == orange._outcomes
+
+
+def test_signaled_regime_reversal_is_not_silently_reused():
+    factors = {"person": "Jordan", "delay": "short", "urgency": "high",
+               "capacity": "open", "channel": "night", "marker": "blue"}
+    earlier = IncrementalDispatchWorld.scenario(
+        seed=7, family="coordination", index=10, factors=factors, epoch=0)
+    changed = IncrementalDispatchWorld.scenario(
+        seed=7, family="coordination", index=10, factors=factors, epoch=1)
+    assert earlier._outcomes["express"] != changed._outcomes["express"]
+    assert earlier.public_cues() != changed.public_cues()
+
+
+def test_prediction_and_disabled_feedback_do_not_mutate_unrelated_beliefs():
+    learner = OutcomeLearner(enabled=False)
+    cues = frozenset({"pair:irrelevant:blue", "pair:person:Alex"})
+    learner.incremental_prediction(cues, "standard")
+    learner.incremental_feedback(cues, "standard",
+                                 success=True, evidence_id="verified")
+    assert not learner.context_counts and not learner.context_base_counts
+    learner.enabled = True
+    learner.incremental_feedback(cues, "standard",
+                                 success=True, evidence_id="verified")
+    before = dict(learner.context_counts)
+    learner.incremental_prediction(frozenset({"pair:unseen:test"}), "express")
+    assert before == dict(learner.context_counts)
+    assert ("pair:unseen:test", "express") not in learner.context_counts
