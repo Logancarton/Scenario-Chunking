@@ -85,8 +85,8 @@ def test_frozen_and_episodic_controls_do_not_generalize_beliefs():
     for index in range(6):
         frozen.step("repair", index)
         episodic.step("repair", index)
-    assert not frozen.learner.context_counts
-    assert not episodic.learner.context_counts
+    assert all(sum(values) == 0 for values in frozen.learner.context_counts.values())
+    assert all(sum(values) == 0 for values in episodic.learner.context_counts.values())
     assert len(frozen.memory.events) == len(episodic.memory.events) == 18
     assert any(r["activated_evidence"] for r in episodic.trace[1:])
 
