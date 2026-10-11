@@ -308,5 +308,3 @@ class TransferWorld:
             "person": rng.choice(PEOPLE) + "-" + str(round_no),
             "order": rng.sample(list(AXES), len(AXES)),
         }
-
-
