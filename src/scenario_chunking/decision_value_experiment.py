@@ -143,6 +143,11 @@ def heldout_temporal_world(seed: int, case: int) -> TemporalDecisionWorld:
         durations.append(TemporalDelivery(
             person, context, promised, duration, deadline,
             rng.choice((.9, 1.3, 1.8)), rng.choice((.7, 1.2, 2.0))))
+    if case % 6 == 5:
+        # Expired alternative: legitimate stop instead of habitual inspection.
+        durations = [TemporalDelivery(
+            d.person, d.context, d.promised, d.arrival_at, 0.0,
+            d.payoff, d.premature_loss) for d in durations]
     speaker = ("Rey", "Sol")[case % 2]
     reported_person = durations[case % len(durations)]
     when = float(rng.choice((1, 2, 3)))
@@ -157,7 +162,8 @@ def heldout_temporal_world(seed: int, case: int) -> TemporalDecisionWorld:
     return TemporalDecisionWorld(
         tuple(durations), inspection_cost=rng.choice((.08, .16, .28)),
         wait_cost=rng.choice((.025, .065, .12)),
-        switch_reward=rng.choice((.12, .32, .52)),
+        switch_reward=(0.0 if case % 6 == 5
+                       else rng.choice((.12, .32, .52))),
         sensor_down=down,
         reports=((when, reported_person.person, reported, speaker),),
         dependency_change=change)
