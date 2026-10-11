@@ -304,19 +304,17 @@ class TransferRun:
         # The visible proposals are randomized neutral labels. Their correctness
         # is never encoded in candidate labels or memory queries.
         rng = random.Random(self.seed * 83 + round_no * 43)
-        base = {axis: rng.choice(self.world.options[axis]) for axis in AXES}
-        plans = []
-        for i in range(4):
-            proposal = dict(base)
-            for axis in rng.sample(list(AXES), i + 1):
-                proposal[axis] = self.world.options[axis][(i + AXES.index(axis)) % 2]
+        # The environment supplies one feasible and three infeasible plans.
+        # Every visible proposal is an opaque combination of five neutral cues,
+        # not a correctness label. The solver has no access to world.correct.
+        plans = [dict(self.world.correct)]
+        for error_count in (1, 2, 3):
+            proposal = dict(self.world.correct)
+            for axis in rng.sample(list(AXES), error_count):
+                proposal[axis] = next(token for token in self.world.options[axis]
+                                      if token != self.world.correct[axis])
             plans.append(proposal)
         rng.shuffle(plans)
-        # Include one procedurally constructed feasible plan as an environment
-        # candidate, but the policy only sees opaque labels and cue features.
-        # This is standard action affordance, not a hidden solution supplied to it.
-        possible = dict(self.world.correct)
-        plans[rng.randrange(4)] = possible
         actions = []
         for idx, proposal in enumerate(plans):
             action = Action("integrate", target=f"proposal-{idx}-{scene['object']}")
@@ -370,10 +368,13 @@ class TransferRun:
                 "evidence_ids": [e.event_id for e in self.memory.events.values()
                                  if e.episode_id == episode and e.kind == EventKind.OUTCOME],
             })
+        # A finite work window makes wasted probes consequential; otherwise
+        # every condition could eventually brute-force every binary decision.
+        budget = 8
         return {
             "round": round_no, "scene": scene, "initial_plan_correct": record["plan_correct"],
-            "success": plan_correct and len(completed) == len(AXES),
-            "axes_completed": sorted(completed),
+            "success": plan_correct and len(completed) == len(AXES) and actions_count <= budget,
+            "axes_completed": sorted(completed), "action_budget": budget,
             "actions": actions_count, "wrong_decisions": wrong + int(not record["plan_correct"]),
             "retries": retries, "correct_order": len(completed) == len(AXES),
         }
@@ -451,7 +452,7 @@ def run_transfer_experiment(output_dir: str | Path, *,
             "mean_wrong_decisions": statistics.mean(t["wrong_decisions"] for t in trials),
             "mean_brier": statistics.mean(r["brier"] for r in group if r["brier"] is not None),
             "mean_detail_events": statistics.mean(r["cost"].get("detail_events", 0) for r in group),
-            "mean_interpretation_evaluations": statistics.mean(r["cost"].get("interpretation_evaluations", 0) for r in group),
+            "mean_interpretation_evaluations": statistics.mean(r["cost"].get("interpretation_evaluations", 0) + r["cost"].get("counterfactual_evaluations", 0) for r in group),
             "mean_latency_ms": statistics.mean(r["cost"].get("selection_ms", 0) + r["cost"].get("retrieval_ms", 0) for r in group),
             "reflection_action_changes": sum(
                 bool(t.get("reflection_changed_action")) for r in group for t in r["traces"]),
