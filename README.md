@@ -299,7 +299,7 @@ The active pathway reuses `MemoryRouter`, `EpisodicMemory`, `MeaningInterpreter`
 
 ## Experiment 8 — corrected contextual scaling research
 
-Research branch: \`experiment/cognitive-scaling-e8-corrected\`. No Sonara production changes.
+Research branch: `experiment/cognitive-scaling-e8-corrected`. No Sonara production changes.
 
 The earlier Experiment 8 implementation is superseded for causal inference:
 it separated five contextual dimensions into independent symbol puzzles, tested
@@ -328,15 +328,15 @@ teaches the continuing training state.
 
 Verified smoke command:
 
-\`\`\`bash
+```bash
 scenario-chunking --scaling --output results-scaling-corrected \
   --seeds 7,23 --rounds 4 --training-stages 20,100,500 \
   --memory-stages 50,100 --complexities 1,3 \
   --scaling-conditions untrained_structural,strong_one_pass,adaptive_focus,bounded_without_learned_focus \
   --scaling-action-budget 3 --candidate-budget 32
-\`\`\`
+```
 
-Outputs: \`scaling_trials.json\`, \`scaling_summary.json\`.
+Outputs: `scaling_trials.json`, `scaling_summary.json`.
 
 A full 30-seed, 10,000-experience, 20,000-distractor study is available through
 the CLI but has **not yet been verified** and may require splitting memory
