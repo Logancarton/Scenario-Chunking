@@ -91,7 +91,12 @@ class UncertaintyRun(TransferRun):
                     "claimed": claimed, "observed": observed,
                     "correct": claimed == observed,
                 })
-        # Causal, observed blocked attempts establish ordered dependencies.
+        # Prerequisite practice uses only tokens whose success was already
+        # recorded in the balanced exploration history, not private answers.
+        confirmed = {row["axis"]: row["token"] for row in self.training
+                     if row["observed"] and not row["historical"]}
+        if set(confirmed) != set(AXES):
+            raise RuntimeError("missing observed correct category token")
         for attempt_round in range(10):
             completed = set()
             remaining = list(AXES)
@@ -100,7 +105,7 @@ class UncertaintyRun(TransferRun):
                 made_progress = False
                 for axis in list(remaining):
                     status, missing = self.world.attempt(
-                        axis, self.world.correct[axis], completed)
+                        axis, confirmed[axis], completed)
                     if status == "blocked":
                         # The workshop instrument explicitly identifies the
                         # blocking predecessor in its observed failure.
