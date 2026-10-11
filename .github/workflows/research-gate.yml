@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "main"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -21,6 +21,8 @@ jobs:
       - run: python -m pip install -e ".[test]"
       - name: Focused behavioral tests
         run: python -m pytest -q tests/test_spreading.py tests/test_meaning.py tests/test_refinement.py tests/test_progressive_hypotheses.py
+      - name: Experiment 6 focused transfer tests
+        run: python -m pytest -q tests/test_transfer.py
       - name: Full suite
         run: python -m pytest -q
       - name: Compilation
@@ -152,6 +154,26 @@ jobs:
           for condition, values in results["summary"].items():
               print("HELDOUT_5SEED " + condition + " " + json.dumps(values, sort_keys=True))
           PY
+      - name: Experiment 6 five-seed transfer and ablation gate
+        run: scenario-chunking --transfer --output results-transfer --seeds 7,23,61,101,149 --rounds 4
+      - name: Verify Experiment 6 evidence and controls
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path("results-transfer/transfer_summary.json").read_text())
+          assert p["experiment"] == 6
+          assert len(p["seeds"]) == 5
+          assert len(p["conditions"]) == 7
+          assert len(p["ablations"]) == 5
+          assert all(x["restarts_preserved"] for x in p["conditions"].values())
+          for name, metrics in p["conditions"].items():
+              assert 0 <= metrics["completion_rate"] <= 1
+              assert len(metrics["round_completion"]) == 4
+              print("TRANSFER " + name + " " + json.dumps(metrics, sort_keys=True))
+          print("ABLATIONS=" + json.dumps(p["ablations"], sort_keys=True))
+          print("VERDICT=" + json.dumps(p["verdict"], sort_keys=True))
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
@@ -160,4 +182,5 @@ jobs:
           path: |
             results/
             results-refinement/
+            results-transfer/
           if-no-files-found: ignore
