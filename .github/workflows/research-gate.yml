@@ -23,6 +23,44 @@ jobs:
       - run: python -m pip install -e ".[test]"
       - name: E12 continuity, revision, leakage and subprocess restart tests
         run: python -m pytest -q tests/test_causal.py tests/test_causal_unified.py
+      - name: E12 WM live usage and retrieval influence diagnostic
+        run: |
+          python - <<'PYTHON'
+          from scenario_chunking.causal_experiment import CausalRun, curriculum, behavior_action
+          for protocol in ("matched", "online"):
+              for seed in (7, 23):
+                  a = CausalRun(seed, "unified", exploration=.5)
+                  b = CausalRun(seed, "unified_activation", exploration=.5)
+                  ra, rb = [], []
+                  for family in ("delivery", "repair", "coordination"):
+                      for epoch in range(2 if family == "coordination" else 1):
+                          train, _ = curriculum(seed, family, epoch)
+                          for case in train:
+                              fixed = (behavior_action(seed, family, epoch, case["index"])
+                                       if protocol == "matched" else None)
+                              ra.append(a.step_case(case, behavior=fixed))
+                              rb.append(b.step_case(case, behavior=fixed))
+                  w = b.working_memory
+                  assert w is not None
+                  assert len(ra) == len(rb) == 96
+                  changed_retrieval = sum(
+                      x["retrieved_chunks"] != y["retrieved_chunks"]
+                      for x, y in zip(ra, rb))
+                  changed_predictions = sum(
+                      x["predictions"] != y["predictions"]
+                      for x, y in zip(ra, rb))
+                  changed_choices = sum(x["action"] != y["action"] for x, y in zip(ra, rb))
+                  print("E12_WM_LIVE_DIAGNOSTIC", {
+                      "protocol": protocol, "seed": seed,
+                      "meaningful_use_events": w.use_events,
+                      "used_prediction_sources": sum(len(y["used_provenance"]) for y in rb),
+                      "contrast_seedings": sum(bool(y["update"].get("contrast_used")) for y in rb),
+                      "reinstatements": w.reinstatements,
+                      "tracked_bundles": len(w.bundles),
+                      "changed_retrievals": changed_retrieval,
+                      "changed_predictions": changed_predictions,
+                      "changed_choices": changed_choices})
+          PYTHON
       - name: E12 frozen unseen combinations, fresh-seed replication and separate ablations
         run: |
           python - <<'PYTHON'
