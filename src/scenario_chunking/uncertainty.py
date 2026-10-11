@@ -45,6 +45,7 @@ class UncertaintyRun(TransferRun):
         self.router.top_k = (64 if condition == "larger_retrieval" else
                              32 if condition == "strong_one_pass" else 24)
         self.source_checks = []
+        self.source_predictions = []
         self._current_reports = {}
         self._resolved_change_axes = set()
 
@@ -133,6 +134,12 @@ class UncertaintyRun(TransferRun):
                 if self.condition == "misleading_reports":
                     choices = self.world.options[axis]
                     reported = choices[(choices.index(reported) + 1) % len(choices)]
+                # Evaluation-only label: never pass correctness to the
+                # interpreter, learner, policy, or current cognitive state.
+                self.source_predictions.append((
+                    self.learner.source_reliability(
+                        item["source"], scene["context"]),
+                    float(reported == self.world.correct[axis])))
                 event = self._event(
                     episode, round_no, kind=EventKind.OBSERVATION,
                     truth=TruthStatus.FACT,
@@ -473,6 +480,9 @@ class UncertaintyRun(TransferRun):
             "restart_preserved": restart_preserved,
             "brier": statistics.mean((p - float(y)) ** 2 for p, y in trials) if trials else None,
             "source_samples": len(self.source_checks),
+            "source_brier": (
+                statistics.mean((p - y) ** 2 for p, y in self.source_predictions)
+                if self.source_predictions else None),
             "learned_prerequisites": len(prerequisites),
             "training_events": before_events,
         }
@@ -512,6 +522,8 @@ def run_uncertainty_experiment(output_dir: str | Path, *,
             "mean_information_actions": statistics.mean(t["verification_actions"] for t in trials),
             "mean_brier": statistics.mean(
                 r["brier"] for r in group if r["brier"] is not None),
+            "mean_source_brier": statistics.mean(
+                r["source_brier"] for r in group if r["source_brier"] is not None),
             "mean_active_detail_events": statistics.mean(
                 r["cost"].get("detail_events", 0) for r in group),
             "mean_processing_evaluations": statistics.mean(
