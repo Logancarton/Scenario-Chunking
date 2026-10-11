@@ -455,8 +455,7 @@ class ContextualWorld:
             source=source, context=context,
             consequence=(.25, .7, 1.0)[complexity - 1],
             self_relevance=(.3, .65, .95)[complexity - 1],
-            revision_notice=(complexity == 3 and not is_correct)
-                            or (complexity == 3 and index % 2 == 1),
+            revision_notice=(complexity == 3 and index % 2 == 1),
             profile=("simple", "uncertain", "adversarial")[complexity - 1],
             protocol_epoch=("v2" if index >= 500 and not heldout
                             or (heldout and complexity == 3 and index % 2 == 1)
