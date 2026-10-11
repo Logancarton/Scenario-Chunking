@@ -707,6 +707,40 @@ class IncrementalDispatchWorld:
         self._outcomes = dict(outcomes)
         self.executed = False
 
+    @classmethod
+    def scenario(cls, *, seed: int, family: str, index: int,
+                 factors: dict[str, str], epoch: int):
+        """The experiment's only private causal ground truth, including noise."""
+        import hashlib
+        p, d, u, c, n = (factors[k] for k in
+                          ("person", "delay", "urgency", "capacity", "channel"))
+        if family == "delivery":
+            standard = (u == "low" or d == "short") and not (
+                n == "night" and p == "Jordan" and d == "long")
+            express = c == "open" and (n == "day" or p == "Alex")
+        elif family == "repair":
+            standard = (c == "open" or d == "short") and not (
+                u == "high" and n == "night")
+            express = (p == "Alex" or n == "day") and (
+                c == "open" or u == "low")
+        else:
+            standard = (u == "low" and d == "short") or (
+                p == "Jordan" and n == "day")
+            express = c == "open" and (u == "high" or n == "night")
+            if epoch == 1:
+                # A real but publicly signaled protocol change; historical
+                # evidence is retained yet should not override the new epoch.
+                express = c == "limited" and (u == "high" or n == "night")
+        truths = {"standard": standard, "express": express}
+        for procedure in truths:
+            digest = hashlib.sha256(
+                f"{seed}|{family}|{index}|{procedure}|noise".encode()
+            ).digest()
+            draw = int.from_bytes(digest[:8], "big") / (2 ** 64)
+            if draw < .09:
+                truths[procedure] = not truths[procedure]
+        return cls(family=family, factors=factors, epoch=epoch, outcomes=truths)
+
     def public_cues(self) -> frozenset[str]:
         return frozenset(
             {f"pair:domain:{self.family}", f"pair:epoch:{self.epoch}"} |
