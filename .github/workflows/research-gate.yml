@@ -167,6 +167,9 @@ jobs:
           assert len(p["conditions"]) == 7
           assert len(p["ablations"]) == 5
           assert all(x["restarts_preserved"] for x in p["conditions"].values())
+          assert p["conditions"]["extended_reflection"]["reflection_action_changes"] > 0, "refiner did not alter live decisions"
+          assert p["conditions"]["extended_reflection"]["recovered_goal_rate"] >= p["conditions"]["untrained_structural"]["recovered_goal_rate"]
+          assert all("round_recovery" in m for m in p["conditions"].values())
           for name, metrics in p["conditions"].items():
               assert 0 <= metrics["completion_rate"] <= 1
               assert len(metrics["round_completion"]) == 4
