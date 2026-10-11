@@ -509,6 +509,53 @@ def run_scaling_experiment(
                 "bootstrap_95_interval": _paired_interval(list(seed_deltas.values())),
             }
     # Isolate reflection itself: same learned focus and retrieval budget.
+    # True within-seed experience learning curves: the held-out tasks and
+    # nuisance loads are identical at every checkpoint.
+    experience_gains = {}
+    for treatment in conditions:
+        experience_gains[treatment] = {}
+        first = {(r["seed"], r["complexity"], r["memory_target"]): r
+                 for r in trials if r["stage"] == 0 and
+                 r["treatment"] == treatment}
+        for stage, checkpoint in enumerate(stages[1:], start=1):
+            current = {(r["seed"], r["complexity"], r["memory_target"]): r
+                       for r in trials if r["stage"] == stage and
+                       r["treatment"] == treatment}
+            seed_improvements = defaultdict(list)
+            for key in sorted(first):
+                seed_improvements[key[0]].append(
+                    current[key]["completion_rate"] - first[key]["completion_rate"])
+            by_seed = {seed: statistics.mean(values)
+                       for seed, values in sorted(seed_improvements.items())}
+            experience_gains[treatment][str(checkpoint)] = {
+                "by_seed": by_seed,
+                "bootstrap_95_interval": _paired_interval(list(by_seed.values())),
+            }
+
+    paired_vs_untrained = {}
+    if "untrained_structural" in conditions:
+        for stage, checkpoint in enumerate(stages):
+            base = {(r["seed"], r["complexity"], r["memory_target"]): r
+                    for r in trials if r["stage"] == stage and
+                    r["treatment"] == "untrained_structural"}
+            paired_vs_untrained[str(checkpoint)] = {}
+            for treatment in conditions:
+                if treatment == "untrained_structural":
+                    continue
+                other = {(r["seed"], r["complexity"], r["memory_target"]): r
+                         for r in trials if r["stage"] == stage and
+                         r["treatment"] == treatment}
+                gains = defaultdict(list)
+                for key in sorted(base):
+                    gains[key[0]].append(
+                        other[key]["completion_rate"] - base[key]["completion_rate"])
+                by_seed = {seed: statistics.mean(values)
+                           for seed, values in sorted(gains.items())}
+                paired_vs_untrained[str(checkpoint)][treatment] = {
+                    "by_seed": by_seed,
+                    "bootstrap_95_interval": _paired_interval(list(by_seed.values())),
+                }
+
     reflection_paired = {}
     if {"adaptive_focus", "learned_focus_one_pass"}.issubset(conditions):
         for stage, checkpoint in enumerate(stages):
@@ -535,6 +582,8 @@ def run_scaling_experiment(
         "complexities": list(complexities), "conditions": list(conditions),
         "stage_results": rows, "paired_focus_vs_onepass": paired,
         "paired_reflection_only": reflection_paired,
+        "paired_experience_gains": experience_gains,
+        "paired_vs_untrained": paired_vs_untrained,
         "limitations": [
             "Procedural contextual reasoning only: no natural-language general cognition claim.",
             "World causal rule is fixed across scenarios but synthetic and small.",
