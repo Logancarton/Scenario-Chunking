@@ -207,6 +207,46 @@ class TransferRun:
             self.memory.create_chunk(events=[noise], transition_reason="distractor",
                                      self_relevance=0.05, salience=1.0)
 
+    def _phase1b_reflect(self) -> None:
+        """Bounded offline thought, with zero new observations or outcome credit.
+
+        Consolidated hypotheses remain tagged as inferred, never facts. They may
+        fill a later retrieval miss but cannot override new causal evidence.
+        """
+        depth = {"limited_reflection": 1, "extended_reflection": 3,
+                 "shuffled_relationships": 3}.get(self.condition, 0)
+        if not depth:
+            return
+        for axis in AXES:
+            for token in self.world.options[axis]:
+                cue = f"signal:{axis}:{token}"
+                hits, _ = self._retrieve((axis,))
+                record = self.interpreter.transfer_evidence(
+                    hits, frozenset({cue}), review_depth=depth)
+                self.cost["offline_reflection_evaluations"] += record["evaluations"]
+                if not record["evidence_ids"]:
+                    continue
+                for hit in hits:
+                    if cue in self.memory.chunks[hit.chunk_id].semantic_tags:
+                        self.memory.store_layer_meaning(hit.chunk_id, axis, cue, {
+                            "status": "inferred_from_observed_outcomes",
+                            "score": record["score"],
+                            "evidence_ids": record["evidence_ids"],
+                            "depth": depth,
+                        })
+                        break
+                reflection_state = TransferState(
+                    episode_id="training-reflection", current_time=self.clock)
+                self.refiner.record_transfer(
+                    reflection_state, preferred=cue,
+                    evidence_ids=record["evidence_ids"], review_depth=depth)
+
+    def _consolidated_score(self, cue: str) -> float | None:
+        values = [meaning for (_, _, name), meaning in self.memory.layer_meanings.items()
+                  if name == cue and isinstance(meaning, dict)
+                  and meaning.get("status") == "inferred_from_observed_outcomes"]
+        return float(values[-1]["score"]) if values else None
+
     def _retrieve(self, axes: tuple[str, ...], *, top_k: int | None = None):
         tags = {"goal:workshop_recovery"}
         for axis in axes:
@@ -243,7 +283,16 @@ class TransferRun:
             record = self.interpreter.transfer_evidence(
                 hits, state.action_features(action), review_depth=depth)
             audits[action.label] = record
-            evidence[action.label] = 0.85 * record["score"]
+            estimate = record["score"]
+            if not record["evidence_ids"]:
+                # Only when detailed retrieval misses all sources may dormant,
+                # provenance-tagged consolidation provide a weak hypothesis.
+                backup = [self._consolidated_score(cue) for cue in
+                          state.action_features(action) if cue.startswith("signal:")]
+                backup = [value for value in backup if value is not None]
+                if backup:
+                    estimate = sum(backup) / len(backup) * 0.5
+            evidence[action.label] = 0.85 * estimate
             self.cost["interpretation_evaluations"] += record["evaluations"]
         # Every choice gets the same exploration noise in all conditions.
         rng_seed = self.seed * 991 + round_no * 97 + len(state.attempted_actions) * 13 + len(step)
@@ -397,6 +446,7 @@ class TransferRun:
 
     def run(self) -> dict:
         self.train()
+        self._phase1b_reflect()
         phase1 = {}
         recall = {}
         for axis in AXES:
@@ -418,8 +468,8 @@ class TransferRun:
         # Pickle is a process-independent serialization round-trip; reconstruct
         # owners from state after reload rather than retaining old object pointers.
         before = (copy.deepcopy(self.memory), copy.deepcopy(self.learner))
-        memory_bytes = pickle.dumps((self.memory, self.learner))
-        restored_memory, restored_learner = pickle.loads(memory_bytes)
+        memory_bytes = pickle.dumps((self.memory, self.learner, self.refiner))
+        restored_memory, restored_learner, restored_refiner = pickle.loads(memory_bytes)
         preserved = (
             len(restored_memory.events) == len(before[0].events) and
             restored_learner.snapshot() == before[1].snapshot() and
@@ -429,7 +479,7 @@ class TransferRun:
         self.memory, self.learner = restored_memory, restored_learner
         self.router = MemoryRouter(self.memory, RetrievalMode.STRUCTURAL, top_k=self.router.top_k)
         self.interpreter = MeaningInterpreter(self.memory, self.learner)
-        self.refiner = ProgressiveRefiner(self.learner, learning=False)
+        self.refiner = restored_refiner
         rounds = [self._execute_round(i) for i in range(self.rounds)]
         probabilities = [
             (t["predicted_success"], float(t["outcome"] == "success"))
@@ -468,7 +518,9 @@ def run_transfer_experiment(output_dir: str | Path, *,
             "mean_wrong_decisions": statistics.mean(t["wrong_decisions"] for t in trials),
             "mean_brier": statistics.mean(r["brier"] for r in group if r["brier"] is not None),
             "mean_detail_events": statistics.mean(r["cost"].get("detail_events", 0) for r in group),
-            "mean_interpretation_evaluations": statistics.mean(r["cost"].get("interpretation_evaluations", 0) + r["cost"].get("counterfactual_evaluations", 0) for r in group),
+            "mean_interpretation_evaluations": statistics.mean(r["cost"].get("interpretation_evaluations", 0) for r in group),
+            "mean_offline_reflection_evaluations": statistics.mean(r["cost"].get("offline_reflection_evaluations", 0) for r in group),
+            "mean_counterfactual_evaluations": statistics.mean(r["cost"].get("counterfactual_evaluations", 0) for r in group),
             "mean_latency_ms": statistics.mean(r["cost"].get("selection_ms", 0) + r["cost"].get("retrieval_ms", 0) for r in group),
             "reflection_action_changes": sum(
                 bool(t.get("reflection_changed_action")) for r in group for t in r["traces"]),
@@ -494,8 +546,10 @@ def run_transfer_experiment(output_dir: str | Path, *,
     control = summary["full_no_reflection"]
     saved_actions = control["mean_actions"] - main["mean_actions"]
     extra_processing = (
-        main["mean_interpretation_evaluations"] -
-        control["mean_interpretation_evaluations"]
+        main["mean_interpretation_evaluations"] +
+        main["mean_offline_reflection_evaluations"] -
+        control["mean_interpretation_evaluations"] -
+        control["mean_offline_reflection_evaluations"]
     )
     verdict = {
         "reflection_completion_gain": main["completion_rate"] - control["completion_rate"],
