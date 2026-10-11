@@ -60,6 +60,85 @@ class OutcomeLearner:
         self.temporal_samples: dict[str, dict[str, tuple[float | None, float | None, float]]] = defaultdict(dict)
         self.temporal_sources: dict[tuple[str, str], list[tuple[float, bool]]] = defaultdict(list)
 
+    def incremental_prediction(self, cues: frozenset[str], procedure: str) -> dict:
+        """Conditional success belief from observed attempts, not episodic lookup.
+
+        Reuses the E6 contextual association tables and evidence provenance.
+        Independent cue effects and conjunctive effects are shrunk so a single
+        coincidental outcome cannot establish a universal rule.
+        """
+        base = self.contextual_base_probability(procedure)
+        base_logit = math.log(max(.001, base) / max(.001, 1.0 - base))
+        effects = []
+        evidence = set()
+        for cue in sorted(x for x in cues if x.startswith("pair:")):
+            probability, n = self.contextual_probability(cue, procedure)
+            if n <= 0:
+                continue
+            local_logit = math.log(max(.001, probability) / max(.001, 1.0 - probability))
+            shrink = n / (n + (2.0 if "&" in cue else 5.0))
+            # A conjunction may be more informative than a marginal, but is
+            # never treated as an independent second observation.
+            effects.append((shrink * (local_logit - base_logit), shrink, cue))
+            evidence.update(self.context_evidence_ids[(cue, procedure)])
+        if effects:
+            correction = sum(delta for delta, _, _ in effects) / max(
+                1.0, sum(weight for _, weight, _ in effects))
+        else:
+            correction = 0.0
+        logit = max(-4.0, min(4.0, base_logit + correction))
+        probability = 1.0 / (1.0 + math.exp(-logit))
+        base_count = sum(self.context_base_counts[procedure])
+        local_count = sum(weight for _, weight, _ in effects)
+        # Epistemic uncertainty declines with support, never with repetition
+        # of a prediction or a thought revision.
+        uncertainty = 1.0 / (1.0 + base_count / 5.0 + local_count)
+        return {
+            "probability": probability, "uncertainty": uncertainty,
+            "evidence_ids": sorted(evidence), "covered_relations": len(effects),
+            "relation_effects": {cue: delta for delta, _, cue in effects},
+        }
+
+    def incremental_feedback(self, cues: frozenset[str], procedure: str, *,
+                             success: bool, evidence_id: str, weight: float = 1.0) -> dict:
+        """One causal feedback item updates only its matching conditional keys."""
+        if not 0.0 < weight <= 1.0:
+            raise ValueError("feedback weight must lie in (0, 1]")
+        before = {cue: self.contextual_probability(cue, procedure)[0]
+                  for cue in cues if cue.startswith("pair:")}
+        prior = self.incremental_prediction(cues, procedure)
+        if not self.enabled:
+            return {"updated": [], "prediction_error": float(success) - prior["probability"]}
+        # The ordinary contextual credit owner performs the one-shot update.
+        # Observation confidence scales the evidence: weighted updates are
+        # supported without changing original source events.
+        if weight == 1.0:
+            self.learn_context_outcome(cues, procedure, success, evidence_id=evidence_id)
+        else:
+            base = self.contextual_base_probability(procedure)
+            for cue in sorted(before):
+                key = (cue, procedure)
+                yes, no = self.context_counts[key]
+                self.context_counts[key] = [yes + weight * int(success),
+                                            no + weight * int(not success)]
+                ids = self.context_evidence_ids[key]
+                if evidence_id not in ids:
+                    ids.append(evidence_id)
+                    del ids[:-12]
+                quality = self.focus_value[cue]
+                posterior = before[cue]
+                quality[0] = .96 * quality[0] + .04 * (
+                    (base - float(success)) ** 2 -
+                    (posterior - float(success)) ** 2)
+                quality[1] += 1
+            counts = self.context_base_counts[procedure]
+            counts[0] += weight * int(success)
+            counts[1] += weight * int(not success)
+        updated = [cue for cue in sorted(before)
+                   if self.contextual_probability(cue, procedure)[0] != before[cue]]
+        return {"updated": updated, "prediction_error":
+                float(success) - prior["probability"], "evidence_id": evidence_id}
+
     def temporal_survival(self, context: str, promised_duration: float, elapsed: float) -> float:
         """Smoothed empirical survival with censored observations still at risk."""
         if not math.isfinite(promised_duration) or promised_duration <= 0:
