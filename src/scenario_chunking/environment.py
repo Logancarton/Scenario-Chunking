@@ -308,3 +308,66 @@ class TransferWorld:
             "person": rng.choice(PEOPLE) + "-" + str(round_no),
             "order": rng.sample(list(AXES), len(AXES)),
         }
+
+class UncertaintyWorld:
+    """Four-choice, partially observed transfer world with a changing DAG.
+
+    Truth remains inside the environment. Public reports are potentially wrong;
+    only attempts and explicit, costly inspections establish current results.
+    """
+
+    def __init__(self, seed: int) -> None:
+        rng = random.Random(seed * 101 + 29)
+        selected = rng.sample(SYMBOLS, 4 * len(AXES))
+        self.options = {
+            axis: tuple(selected[4*i:4*i+4]) for i, axis in enumerate(AXES)
+        }
+        self.correct = {axis: rng.choice(self.options[axis]) for axis in AXES}
+        self.order = rng.sample(list(AXES), len(AXES))
+        self.active_order = list(self.order)
+        self.original_time = self.correct["time"]
+        self.revised = False
+
+    def revise(self) -> None:
+        if self.revised:
+            return
+        self.revised = True
+        options = self.options["time"]
+        self.correct["time"] = options[(options.index(self.correct["time"]) + 1) % len(options)]
+        self.active_order[1], self.active_order[2] = self.active_order[2], self.active_order[1]
+
+    def accepted(self, axis: str, token: str, *, historical: bool = False) -> bool:
+        return token == (self.original_time if axis == "time" and historical
+                         else self.correct[axis])
+
+    def attempt(self, axis: str, token: str, completed: set[str]) -> tuple[str, str | None]:
+        index = self.active_order.index(axis)
+        if index and self.active_order[index - 1] not in completed:
+            return "blocked", self.active_order[index - 1]
+        return ("success" if self.accepted(axis, token) else "failure"), None
+
+    def prerequisite(self, axis: str) -> str | None:
+        index = self.active_order.index(axis)
+        return self.active_order[index - 1] if index else None
+
+    def scene(self, seed: int, round_no: int) -> dict:
+        rng = random.Random(seed * 1009 + round_no * 83)
+        return {"object": rng.choice(OBJECTS) + "-" + str(seed + round_no),
+                "person": rng.choice(PEOPLE) + "-" + str(round_no),
+                "context": "night" if round_no % 2 else "day"}
+
+    def reports(self, seed: int, round_no: int, axis: str) -> list[dict]:
+        """Generate context-dependent fallible testimony; not an answer key."""
+        rng = random.Random(seed * 2903 + round_no * 107 + AXES.index(axis) * 17)
+        choices = self.options[axis]
+        context = "night" if round_no % 2 else "day"
+        reports = []
+        for source in ("Aster", "Beryl", "Cinder"):
+            reliability = {"Aster": .84, "Beryl": .22,
+                           "Cinder": .75 if context == "day" else .27}[source]
+            actual = self.correct[axis]
+            reported = (actual if rng.random() < reliability
+                        else rng.choice([x for x in choices if x != actual]))
+            reports.append({"source": source, "axis": axis, "token": reported,
+                            "context": context, "issued_round": round_no})
+        return reports
