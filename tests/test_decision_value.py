@@ -145,3 +145,35 @@ def test_paired_controls_and_distractors_without_preordained_victory():
                                    row["detail_events"], row["cognitive_operations"]))
         assert not any("arrival_at" in str(v) for v in row["trace"])
     assert set(report["summary"]) == {"0", "6"}
+
+
+def test_exhausted_opportunities_make_stopping_a_real_environment_option():
+    world = heldout_temporal_world(17, 5)
+    assert world.switch_reward == 0
+    assert all(props["deadline"] == 0
+               for props in world.public_constraints().values())
+    assert world.apply(
+        __import__("scenario_chunking.models", fromlist=["Action"]).Action("stop"),
+        known_dependencies={}) == 0
+    assert world.finished
+
+
+def test_executed_outcome_creates_provenance_bound_learning_not_an_oracle_label():
+    learner, memory = train_temporal_evidence(8, 10)
+    world = TemporalDecisionWorld((
+        TemporalDelivery("Ada", "routine", 2, .5, 8, 5, .5),
+        TemporalDelivery("Bea", "routine", 3, 2, 8, 1, .5),
+    ), switch_reward=0.0)
+    run = DecisionValueRun(world, mode="compute_matched_one_pass",
+                           seed=17, learner=learner, memory=memory)
+    run.state.advance_world_time(2)
+    run.world.advance(2)
+    run._receive(run.world.inspect("Ada"))
+    learned_before = len(run.learner.credit_log)
+    run.step()
+    if run.world.actions[-1].startswith("proceed:"):
+        assert len(run.learner.credit_log) == learned_before + 1
+        credit = run.learner.credit_log[-1]
+        event = run.memory.events[credit["cause_event_id"]]
+        assert event.kind.value == "action"
+        assert event.action.kind == "proceed"
