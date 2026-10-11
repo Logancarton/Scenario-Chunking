@@ -552,3 +552,141 @@ class ReturnTimelineWorld:
                       "arrival_at": (self.actual_arrival_at
                                      if arrived and self.timestamp_available else None)},
         )
+
+
+@dataclass(frozen=True)
+class TemporalDelivery:
+    """Private arrival truth, exposed only through world observations/actions."""
+    person: str
+    context: str
+    promised: float
+    arrival_at: float | None
+    deadline: float
+    payoff: float
+    premature_loss: float
+
+
+class TemporalDecisionWorld:
+    """E10 bounded synthetic decision environment, no oracle policy access.
+
+    A decision-maker receives promises and public constraints. Arrival times and
+    dependency changes stay private until experienced through a valid channel.
+    """
+    def __init__(self, deliveries: tuple[TemporalDelivery, ...], *,
+                 inspection_cost: float = 0.12, wait_cost: float = 0.035,
+                 switch_reward: float = 0.24, sensor_down: frozenset[str] = frozenset(),
+                 reports: tuple[tuple[float, str, bool, str], ...] = (),
+                 dependency_change: tuple[float, str, str] | None = None):
+        if len(deliveries) < 2 or len(set(d.person for d in deliveries)) != len(deliveries):
+            raise ValueError("at least two distinct pending expectations")
+        self._deliveries = {d.person: d for d in deliveries}
+        self._reports = tuple(reports)
+        self._dependency_change = dependency_change
+        self._sensor_down = sensor_down
+        self.inspection_cost = inspection_cost
+        self.wait_cost = wait_cost
+        self.switch_reward = switch_reward
+        self.now = 0.0
+        self.reward = 0.0
+        self.finished = False
+        self._notices: set[str] = set()
+        self.actions: list[str] = []
+
+    def public_constraints(self) -> dict[str, dict]:
+        return {d.person: {"context": d.context, "promised": d.promised,
+                           "deadline": d.deadline, "payoff": d.payoff,
+                           "premature_loss": d.premature_loss}
+                for d in self._deliveries.values()}
+
+    def promises(self) -> list[EnvironmentSignal]:
+        return [EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=f"{d.person} promises delivery in {d.promised:g} units",
+            semantic_tags=frozenset({"signal:temporal", "temporal:promise"}),
+            person_id=d.person, informative=True, confidence=.75,
+            metadata={"source_status": "reported_promise",
+                      "promised_duration": d.promised})
+            for d in self._deliveries.values()]
+
+    def advance(self, now: float) -> list[EnvironmentSignal]:
+        if now < self.now:
+            raise ValueError("time cannot move backwards")
+        self.now = now
+        signals = []
+        for when, person, arrived, speaker in self._reports:
+            key = f"report:{when}:{person}:{speaker}"
+            if when <= now and key not in self._notices:
+                self._notices.add(key)
+                signals.append(EnvironmentSignal(
+                    kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+                    content=f"{speaker} claims {person} {'arrived' if arrived else 'is absent'}",
+                    semantic_tags=frozenset({"signal:temporal", "temporal:report"}),
+                    person_id=speaker, confidence=.5,
+                    metadata={"source_status": "unverified_testimony",
+                              "about": person, "reported_present": arrived,
+                              "reported_at": when}))
+        if self._dependency_change is not None:
+            when, person, dependency = self._dependency_change
+            key = f"change:{when}:{person}"
+            if when <= now and key not in self._notices:
+                self._notices.add(key)
+                signals.append(EnvironmentSignal(
+                    kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+                    content=f"Task for {person} now depends on {dependency}",
+                    semantic_tags=frozenset({"signal:temporal", "temporal:dependency"}),
+                    informative=True,
+                    metadata={"dependency_change": person, "required": dependency}))
+        return signals
+
+    def inspect(self, person: str) -> EnvironmentSignal:
+        if person not in self._deliveries:
+            raise ValueError("unknown person")
+        if person in self._sensor_down:
+            return EnvironmentSignal(
+                kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+                content=f"Sensor for {person} unavailable",
+                semantic_tags=frozenset({"signal:temporal", "temporal:unavailable"}),
+                person_id=person, metadata={"source_status": "unavailable"})
+        d = self._deliveries[person]
+        present = d.arrival_at is not None and self.now >= d.arrival_at
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=f"Direct check of {person}: {'arrived' if present else 'absent'}",
+            semantic_tags=frozenset({"signal:temporal", "temporal:direct"}),
+            person_id=person, informative=True,
+            metadata={"source_status": "direct_observation",
+                      "returned": present, "arrival_at": d.arrival_at if present else None})
+
+    def apply(self, action: Action, *, known_dependencies: dict[str, str]) -> float:
+        """Only environment execution sees private completion truth."""
+        if self.finished:
+            raise ValueError("world already finished")
+        self.actions.append(action.label)
+        delta = 0.0
+        if action.kind == "wait":
+            delta = -self.wait_cost
+        elif action.kind == "check":
+            delta = -self.inspection_cost
+        elif action.kind == "switch":
+            delta = self.switch_reward
+            self.finished = True
+        elif action.kind == "stop":
+            self.finished = True
+        elif action.kind == "proceed":
+            d = self._deliveries[action.target]
+            done = d.arrival_at is not None and d.arrival_at <= self.now
+            # Changed dependency truth matters only after its public signal.
+            if self._dependency_change and self.now >= self._dependency_change[0]:
+                subject, required = self._dependency_change[1:]
+                if subject == action.target:
+                    other = self._deliveries[required]
+                    done = done and other.arrival_at is not None and other.arrival_at <= self.now
+            if self.now > d.deadline:
+                delta = -d.premature_loss
+            else:
+                delta = d.payoff if done else -d.premature_loss
+            self.finished = True
+        else:
+            raise ValueError("unsupported action")
+        self.reward += delta
+        return delta
