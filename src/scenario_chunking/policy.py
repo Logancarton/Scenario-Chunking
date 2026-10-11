@@ -21,12 +21,18 @@ class ActionSelector:
         self.meaning_mode = meaning_mode
         self.interpreter = MeaningInterpreter(memory, learner) if meaning_mode else None
         self.refiner = refiner
+        # E12: per-scope attempt counts for optional optimism-under-uncertainty.
+        self.exploration_counts: dict[tuple[str, str], int] = {}
 
     def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit], *,
                refine: bool = False, transfer_scores: dict[str, float] | None = None,
                transfer_context: dict | None = None) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
+        explore = (transfer_context or {}).get("exploration")
+        bonuses = {}
+        if explore and transfer_context.get("cognitive_mode") == "incremental":
+            transfer_context, bonuses = self._optimistic(transfer_context, explore, actions)
         scored: list[tuple[float, Action, list[str], object]] = []
         prepared = self.interpreter.prepare(hits) if self.interpreter else None
         interpretation_evaluations = prepared.examined_event_records if prepared else 0
@@ -143,6 +149,12 @@ class ActionSelector:
         predicted_success = 1.0 / (1.0 + math.exp(-score))
         if thought_trace and thought_trace.get("prediction") is not None:
             predicted_success = float(thought_trace["prediction"])
+        if transfer_context and transfer_context.get("cognitive_mode") == "incremental":
+            predicted_success = transfer_context["predictions"][action.label]["probability"]
+        if explore and bonuses:
+            key = (explore["scope"], action.label)
+            self.exploration_counts[key] = self.exploration_counts.get(key, 0) + 1
+            reasons = reasons + [f"exploration_bonus={bonuses[action.label]:.3f}"]
         return SelectionDecision(
             action=action,
             score=score,
@@ -153,6 +165,21 @@ class ActionSelector:
             interpretation_event_evaluations=interpretation_evaluations,
             thought_trace=thought_trace,
         )
+
+    def _optimistic(self, context: dict, explore: dict, actions: list[Action]):
+        """Count-based UCB: V(a) + k*sqrt(ln(1+N)/(1+n_a)) within one task scope.
+
+        Learner-agnostic by design, so every learner explores under the same
+        rule. Only the choice is optimistic; predictions stay unbiased.
+        """
+        scope, kappa = explore["scope"], float(explore["bonus"])
+        counts = {a.label: self.exploration_counts.get((scope, a.label), 0) for a in actions}
+        total = sum(counts.values())
+        bonuses = {label: kappa * math.sqrt(math.log(1 + total) / (1 + n)) if total
+                   else kappa for label, n in counts.items()}
+        values = {k: v + bonuses.get(k, 0.0) for k, v in context["candidate_values"].items()}
+        return {**context, "candidate_values": values,
+                "greedy_values": context["candidate_values"]}, bonuses
 
     @staticmethod
     def _base_prior(action: Action) -> float:

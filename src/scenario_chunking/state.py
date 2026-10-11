@@ -59,6 +59,8 @@ class CognitiveState:
 
     # Cross-experience E11 context; events are stored in the existing memory.
     context_cues: frozenset[str] = frozenset()
+    # Explicit task identity; observations keep their distinct episode IDs.
+    thought_key: str | None = None
 
     def schedule_temporal(self, *, expectation_id: str, subject: str, context: str,
                           source_event_id: str, due_at: float, confidence: float) -> TimedExpectation:

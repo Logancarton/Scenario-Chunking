@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 
@@ -17,6 +17,102 @@ class ActionTrace:
     resolved: bool = False
     produced_evidence_ids: frozenset[str] = frozenset()
     used_evidence_ids: frozenset[str] = frozenset()
+
+
+@dataclass
+class CausalHypothesis:
+    """A defeasible conditional explanation, never an established causal fact."""
+    hypothesis_id: str
+    conditions: tuple[str, ...]
+    predicts_success: bool
+    origin: tuple[str, str]
+    support: list[str] = field(default_factory=list)
+    contradictions: list[str] = field(default_factory=list)
+    support_count: int = 0
+    contradiction_count: int = 0
+
+    def observe(self, evidence_id: str, success: bool) -> None:
+        if success == self.predicts_success:
+            self.support_count += 1
+            target = self.support
+        else:
+            self.contradiction_count += 1
+            target = self.contradictions
+        target.append(evidence_id)
+        del target[:-12]
+
+    def trace(self) -> dict:
+        n = self.support_count + self.contradiction_count
+        confidence = (self.support_count + 1) / (n + 2)
+        return {"id": self.hypothesis_id, "conditions": list(self.conditions),
+                "predicts_success": self.predicts_success,
+                "origin": list(self.origin), "support": list(self.support),
+                "contradictions": list(self.contradictions),
+                "confidence": confidence,
+                "support_count": self.support_count, "contradiction_count": self.contradiction_count,
+                "status": ("contradicted" if self.contradiction_count > self.support_count
+                           else "supported" if self.support_count >= 2 else "tentative")}
+
+
+Rule = frozenset  # frozenset[frozenset[str]]: a DNF over public literals
+
+
+def _holds(rule: Rule, literals: frozenset[str]) -> bool:
+    return any(term <= literals for term in rule)
+
+
+def _axis(literal: str) -> str:
+    return literal.split(":", 2)[1]
+
+
+def describe_rule(rule: Rule) -> str:
+    if not rule:
+        return "never"
+    return " OR ".join(" AND ".join(sorted(t)) for t in sorted(rule, key=sorted))
+
+
+@dataclass
+class ExplanationBank:
+    """E12b: one persistent, revisable explanation of when a procedure succeeds.
+
+    The explanation is a bounded beam of competing complete rules (small DNFs),
+    each scored by every retained observation under an explicit noise model.
+    Revision edits the CURRENT best rules (specialize, generalize, add or drop
+    a term); new experiences and contrasts only seed the edit material.
+    """
+    evidence: list[tuple[frozenset[str], bool, str]] = field(default_factory=list)
+    beam: dict[Rule, dict] = field(default_factory=lambda: {
+        frozenset(): {"operator": "prior", "origin": None, "revision": 0}})
+    revisions: int = 0
+
+    noise: float = 0.1
+    complexity_price: float = 0.7
+    beam_width: int = 48
+    evidence_budget: int = 64
+    edited_rules: int = 8
+    max_terms: int = 3
+
+    def score(self, rule: Rule) -> float:
+        fit = sum(math.log(1 - self.noise) if _holds(rule, c) == y else math.log(self.noise)
+                  for c, y, _ in self.evidence)
+        size = sum(len(t) for t in rule) + .5 * len(rule)
+        return fit - self.complexity_price * size
+
+    def posterior(self) -> list[tuple[Rule, float]]:
+        scored = [(rule, self.score(rule)) for rule in self.beam]
+        top = max(v for _, v in scored)
+        weights = [(rule, math.exp(v - top)) for rule, v in scored]
+        total = sum(w for _, w in weights)
+        return sorted(((r, w / total) for r, w in weights), key=lambda x: (-x[1], describe_rule(x[0])))
+
+    def trace(self, rule: Rule, weight: float) -> dict:
+        support = [eid for c, y, eid in self.evidence if _holds(rule, c) == y]
+        contra = [eid for c, y, eid in self.evidence if _holds(rule, c) != y]
+        return {"id": describe_rule(rule), "rule": sorted(sorted(t) for t in rule),
+                "weight": weight, "confidence": weight,
+                "support_count": len(support), "contradiction_count": len(contra),
+                "support": support[-12:], "contradictions": contra[-12:],
+                **{k: self.beam[rule][k] for k in ("operator", "origin", "revision")}}
 
 
 class OutcomeLearner:
@@ -56,9 +152,201 @@ class OutcomeLearner:
         self.temporal_delay: dict[str, list[float]] = defaultdict(_two_zero_counts)
         self.temporal_assessed: set[str] = set()
         self.temporal_arrivals: set[str] = set()
+        self.causal_hypothesis_budget = 32
+        self.causal_hypotheses: dict[tuple, dict[tuple, CausalHypothesis]] = {}
+        self.causal_counts: dict[tuple, list[int]] = {}
+        self.causal_sources: dict[tuple, list[str]] = {}
+        self.causal_seen: dict[tuple, set[str]] = {}
+        self.explanations: dict[tuple, ExplanationBank] = {}
         # E10 sufficient statistics: a direct arrival or a right-censored interval.
         self.temporal_samples: dict[str, dict[str, tuple[float | None, float | None, float]]] = defaultdict(dict)
         self.temporal_sources: dict[tuple[str, str], list[tuple[float, bool]]] = defaultdict(list)
+
+    @staticmethod
+    def causal_scope(cues: frozenset[str]) -> tuple[str, ...]:
+        return tuple(sorted(c for c in cues if "&" not in c and
+                            c.startswith(("pair:domain:", "pair:epoch:"))))
+
+    def causal_prediction(self, cues: frozenset[str], procedure: str) -> dict:
+        key = (self.causal_scope(cues), procedure)
+        yes, no = self.causal_counts.get(key, (0, 0))
+        base = (yes + 1) / (yes + no + 2)
+        candidates = [h for h in self.causal_hypotheses.get(key, {}).values()
+                      if set(h.conditions) <= cues and h.support_count >= 2
+                      and h.support_count > h.contradiction_count]
+        candidates.sort(key=lambda h: (-(h.support_count + 1) /
+                         (h.support_count + h.contradiction_count + 2),
+                         -h.support_count, h.hypothesis_id))
+        active = candidates[:4]
+        probabilities, weights = [], []
+        for h in active:
+            n = h.support_count + h.contradiction_count
+            reliability = (h.support_count + 1) / (n + 2)
+            probabilities.append(reliability if h.predicts_success else 1 - reliability)
+            weights.append(n / (n + 4))
+        # Overlapping rules are alternatives, never independent observations.
+        weight = max(weights, default=0.0)
+        local = sum(p*w for p,w in zip(probabilities, weights)) / sum(weights) if active else base
+        p = (1-weight)*base + weight*local
+        disagreement = max(probabilities, default=base) - min(probabilities, default=base)
+        conflict = max((2 * (h.contradiction_count + 1) /
+                        (h.support_count + h.contradiction_count + 2) for h in active), default=0.0)
+        uncertainty = (max(1 / (1 + (yes + no) / 4), 1-weight, disagreement, conflict)
+                       if active else max(.5, 1 / (1 + (yes + no) / 4)))
+        evidence = sorted(set(self.causal_sources.get(key, ())) |
+                          {eid for h in active for eid in (*h.origin, *h.support, *h.contradictions)})
+        return {"probability": p, "uncertainty": uncertainty,
+                "evidence_ids": evidence,
+                "hypotheses": [h.trace() for h in active],
+                "scope": list(key[0]), "base_probability": base,
+                "hypotheses_examined": len(self.causal_hypotheses.get(key, {}))}
+
+    def causal_feedback(self, cues: frozenset[str], procedure: str, *,
+                        success: bool, evidence_id: str, contrast=None,
+                        allow_contrast: bool = True) -> dict:
+        """Only this owner revises beliefs; refiner supplies a diagnostic pair.
+
+        Candidate budget is per indexed scope/action. Source events stay in
+        EpisodicMemory. No scan or activation of unrelated hypothesis banks.
+        """
+        key = (self.causal_scope(cues), procedure)
+        prior = self.causal_prediction(cues, procedure)
+        if not self.enabled or evidence_id in self.causal_seen.get(key, set()):
+            return {"updated": [], "prediction_error": float(success)-prior["probability"]}
+        self.causal_seen.setdefault(key, set()).add(evidence_id)
+        counts = self.causal_counts.setdefault(key, [0, 0])
+        counts[0 if success else 1] += 1
+        sources = self.causal_sources.setdefault(key, [])
+        sources.append(evidence_id)
+        del sources[:-12]
+        bank = self.causal_hypotheses.setdefault(key, {})
+        proposed = []
+        if allow_contrast and contrast is not None:
+            old_cues = frozenset(contrast["cues"])
+            before = {c.split(":", 2)[1]: c for c in old_cues if c.startswith("pair:") and "&" not in c}
+            after = {c.split(":", 2)[1]: c for c in cues if c.startswith("pair:") and "&" not in c}
+            delta = [axis for axis in after if before.get(axis) != after[axis]]
+            comparable = (contrast["procedure"] == procedure and
+                          self.causal_scope(old_cues) == key[0] and
+                          set(before) == set(after) and len(delta) == 1 and
+                          contrast["success"] != success and
+                          contrast["evidence_id"] != evidence_id)
+            if comparable:
+                axis = delta[0]
+                shared = sorted((cues & old_cues) - set(key[0]))
+                # Competing marginal and context-qualified explanations; the
+                # marker gets exactly the same treatment as any other feature.
+                for literal, outcome in ((after[axis], success), (before[axis], contrast["success"])):
+                    for condition in [(literal,)] + [tuple(sorted((literal, c))) for c in shared if "&" not in c]:
+                        identity = (condition, outcome)
+                        if identity not in bank and len(bank) < self.causal_hypothesis_budget:
+                            h = CausalHypothesis(
+                                hypothesis_id="|".join((*key[0], procedure, *condition, str(outcome))),
+                                conditions=condition, predicts_success=outcome,
+                                origin=(contrast["evidence_id"], evidence_id))
+                            bank[identity] = h
+                            proposed.append(h.hypothesis_id)
+                            if set(condition) <= old_cues:
+                                h.observe(contrast["evidence_id"], contrast["success"])
+        revised = []
+        for h in bank.values():
+            if set(h.conditions) <= cues:
+                h.observe(evidence_id, success)
+                revised.append(h.hypothesis_id)
+        return {"updated": revised, "proposed": proposed,
+                "prediction_error": float(success)-prior["probability"],
+                "evidence_id": evidence_id, "scope": list(key[0]),
+                "hypotheses": [h.trace() for h in bank.values()]}
+
+    @staticmethod
+    def explanation_literals(cues: frozenset[str]) -> frozenset[str]:
+        return frozenset(c for c in cues if c.startswith("pair:") and "&" not in c
+                         and not c.startswith(("pair:domain:", "pair:epoch:")))
+
+    def explanation_prediction(self, cues: frozenset[str], procedure: str) -> dict:
+        """Read-only: posterior-weighted prediction of the scoped explanation."""
+        key = (self.causal_scope(cues), procedure)
+        bank = self.explanations.get(key)
+        literals = self.explanation_literals(cues)
+        if bank is None or not bank.evidence:
+            return {"probability": .5, "uncertainty": 1.0, "evidence_ids": [],
+                    "hypotheses": [], "explanation": None, "scope": list(key[0]),
+                    "hypotheses_examined": 0}
+        posterior = bank.posterior()
+        q = sum(w for rule, w in posterior if _holds(rule, literals))
+        p = (1 - bank.noise) * q + bank.noise * (1 - q)
+        best = [bank.trace(rule, w) for rule, w in posterior[:3]]
+        return {"probability": p,
+                # Disagreement among competing explanations about THIS context.
+                "uncertainty": 4 * q * (1 - q),
+                "evidence_ids": sorted({eid for h in best[:1] for eid in (*h["support"], *h["contradictions"])}),
+                "hypotheses": best, "explanation": best[0]["id"],
+                "explains_context": _holds(posterior[0][0], literals),
+                "scope": list(key[0]), "hypotheses_examined": len(posterior)}
+
+    def explanation_feedback(self, cues: frozenset[str], procedure: str, *,
+                             success: bool, evidence_id: str, contrast=None,
+                             allow_contrast: bool = True, persist: bool = True) -> dict:
+        """Revise the scoped explanation with one observed outcome.
+
+        persist=False is the continuity ablation: the explanation is rebuilt
+        from this experience alone (evidence is still retained and scored).
+        """
+        key = (self.causal_scope(cues), procedure)
+        prior = self.explanation_prediction(cues, procedure)
+        bank = self.explanations.setdefault(key, ExplanationBank())
+        if not self.enabled or any(eid == evidence_id for _, _, eid in bank.evidence):
+            return {"updated": [], "proposed": [], "prediction_error": float(success) - prior["probability"]}
+        literals = self.explanation_literals(cues)
+        bank.evidence.append((literals, success, evidence_id))
+        del bank.evidence[:-bank.evidence_budget]
+        bank.revisions += 1
+        if not persist:
+            bank.beam = {frozenset(): {"operator": "prior", "origin": None, "revision": bank.revisions}}
+        terms = {frozenset([l]) for l in literals} | {
+            frozenset([a, b]) for a in literals for b in literals if a < b and _axis(a) != _axis(b)}
+        seeded = set()
+        if allow_contrast and contrast is not None and contrast["procedure"] == procedure:
+            old = self.explanation_literals(frozenset(contrast["cues"]))
+            if (self.causal_scope(frozenset(contrast["cues"])) == key[0]
+                    and len(old ^ literals) == 2 and contrast["success"] != success):
+                # The changed condition, alone and within its successful context.
+                flipped, context = (literals - old, literals) if success else (old - literals, old)
+                seeded = {flipped} | {flipped | {l} for l in context - flipped}
+                terms |= seeded
+        before = bank.posterior()[0][0]
+        edited = [rule for rule, _ in bank.posterior()[:bank.edited_rules]]
+        candidates: dict[Rule, tuple[str, str]] = {}
+        def propose(rule, operator):
+            rule = frozenset(rule)
+            if rule not in bank.beam and rule not in candidates and len(rule) <= bank.max_terms:
+                candidates[rule] = ("contrast" if seeded & set(rule) else operator)
+        for rule in edited:
+            for term in terms:
+                propose(rule | {term}, "add_term")
+            for term in rule:
+                propose(rule - {term}, "drop_term")
+                for l in term:
+                    if len(term) > 1:
+                        propose((rule - {term}) | {term - {l}}, "generalize")
+                for l in literals:
+                    if len(term) < 2 and _axis(l) not in {_axis(x) for x in term}:
+                        propose((rule - {term}) | {term | {l}}, "specialize")
+        for rule, operator in candidates.items():
+            bank.beam[rule] = {"operator": operator, "origin": evidence_id, "revision": bank.revisions}
+        ranked = sorted(bank.beam, key=lambda r: (-bank.score(r), describe_rule(r)))
+        bank.beam = {r: bank.beam[r] for r in ranked[:bank.beam_width]}
+        after = bank.posterior()
+        return {"updated": [describe_rule(r) for r, _ in after[:3]],
+                "proposed": [describe_rule(r) for r in candidates if r in bank.beam],
+                "candidates_examined": len(candidates),
+                "explanation_before": describe_rule(before),
+                "explanation": describe_rule(after[0][0]),
+                "revised": after[0][0] != before,
+                "contrast_used": bool(seeded),
+                "prediction_error": float(success) - prior["probability"],
+                "evidence_id": evidence_id, "scope": list(key[0]),
+                "hypotheses": [bank.trace(r, w) for r, w in after[:3]]}
 
     def incremental_prediction(self, cues: frozenset[str], procedure: str) -> dict:
         """Conditional success belief from observed attempts, not episodic lookup.

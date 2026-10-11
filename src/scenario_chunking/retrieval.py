@@ -24,13 +24,24 @@ class MemoryRouter:
         self.candidate_budget = candidate_budget
         self.spreader = BoundedNeighborActivator(memory, spread_budget) if mode == RetrievalMode.SPREADING else None
 
-    def retrieve(self, query: RetrievalQuery) -> tuple[list[RetrievalHit], RetrievalStats]:
+    def retrieve(self, query: RetrievalQuery, *, anchor_event_ids: tuple[str, ...] = ()) -> tuple[list[RetrievalHit], RetrievalStats]:
         started = perf_counter()
         stats = RetrievalStats(total_chunks=len(self.memory.chunks))
         if self.mode == RetrievalMode.FULL:
             candidate_ids = list(self.memory.chunk_order)
         else:
             candidate_ids = self._sparse_candidates(query)
+        # At most two sourced continuity pointers compete inside the same
+        # header/detail budgets. Routing still checks goal and positive score.
+        anchors = []
+        for eid in anchor_event_ids[:2]:
+            cid = self.memory.event_to_chunk.get(eid)
+            if (cid and cid not in anchors
+                    and self.memory.chunks[cid].header.goal_id == query.goal_id):
+                anchors.append(cid)
+        candidate_ids = anchors + [cid for cid in candidate_ids if cid not in anchors]
+        if self.candidate_budget is not None:
+            candidate_ids = candidate_ids[:self.candidate_budget]
         stats.candidate_chunks = len(candidate_ids)
 
         scored: list[RetrievalHit] = []
@@ -43,7 +54,8 @@ class MemoryRouter:
             scored.append(RetrievalHit(chunk_id=cid, score=score, reasons=reasons))
 
         scored.sort(key=lambda h: (-h.score, h.chunk_id))
-        hits = scored[: self.top_k]
+        anchored = [h for h in scored if h.chunk_id in anchors]
+        hits = (anchored + [h for h in scored if h.chunk_id not in anchors])[:self.top_k]
         stats.initial_hit_ids = [h.chunk_id for h in hits]
         query_non_goal = {tag for tag in query.semantic_tags if not tag.startswith("goal:")}
         for hit in hits:

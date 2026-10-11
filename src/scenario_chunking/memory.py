@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from itertools import count
 from collections import deque
 import hashlib
 
@@ -28,11 +27,13 @@ class EpisodicMemory:
         # Bounded, incrementally maintained routing headers: no full-history scan.
         self.focus_examples: dict[str, list[str]] = defaultdict(list)
         self.focus_recent: dict[str, deque[str]] = {}
-        self._event_ids = count(1)
-        self._chunk_ids = count(1)
+        # Plain integers (not itertools.count) so state pickles on Python 3.14+.
+        self._event_ids = 0
+        self._chunk_ids = 0
 
     def next_event_id(self) -> str:
-        return f"e{next(self._event_ids):06d}"
+        self._event_ids += 1
+        return f"e{self._event_ids:06d}"
 
     def add_event(self, event: Event) -> None:
         if event.event_id in self.events:
@@ -56,7 +57,8 @@ class EpisodicMemory:
 
         first = events[0]
         last = events[-1]
-        chunk_id = f"c{next(self._chunk_ids):06d}"
+        self._chunk_ids += 1
+        chunk_id = f"c{self._chunk_ids:06d}"
         previous = self.episode_index[first.episode_id][-1] if self.episode_index[first.episode_id] else None
         tags = frozenset().union(*(event.semantic_tags for event in events))
         people = frozenset(event.person_id for event in events if event.person_id)

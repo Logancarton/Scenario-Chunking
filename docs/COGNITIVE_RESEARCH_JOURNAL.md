@@ -705,3 +705,52 @@ These are observed results from the GitHub E11 replication job following the ini
 **Verdict and falsifiable weakness:** Persistent incremental updates and supported beliefs work mechanically. This is not evidence that new contexts cause better decisions. The full treatment underperforms stronger simpler controls on actual held-out reward and completion, while selected-action calibration improves modestly versus one-pass. Interaction ablation produces at least as much reward, so improved decisions **cannot** be attributed to learned two-variable relationships. A single observed outcome updates 36 overlapping cues: feature co-occurrence is not yet causal discrimination. The observational bandit policy can select which outcome it sees, generating biased training evidence. A prequential held-out window also differs from a strictly frozen model transfer test. The most valuable next test is to add conservative one-variable contrast attribution from adjacent *observed* action outcomes, with explicit residual uncertainty, and independently evaluate untrained combinations with stable action-specific counterfactual scoring. Do not patch environment answers into the learned model.
 
 **Verification and maturity:** Built, Integrated and Enabled only in the research runner. Target CI: E11 focused tests and independent-process restart, the E6–E10 cumulative suite, independent five-seed replication, compilation and diff integrity. Completed gate status is determined by the linked GitHub Actions run; a unit or restart pass alone is not a full research gate. No general-human-cognition claim, no evidence for promoting this mechanism to Sonara production.
+
+## Experiment 12 — persistent, revisable explanations predicting never-experienced combinations (2026-10-11)
+
+**Question:** Can Sonara experience something, form an explanation, experience something different, revise *that same* explanation, and correctly predict a combination it has never experienced — producing better decisions on genuinely new situations than episodic case memory?
+
+**Protocol changes from E11:** Before any outcome, eight of each family's 32 factor combinations are withheld (`curriculum`). Every held-out decision is made from a deep copy of the *same frozen* post-training state with learning disabled, so held-out labels neither teach nor reactivate memory (E11's final-eight window kept learning). The marker is randomized and balanced within each split and epoch. Coordination's two epochs each span the full factorial space, so epoch cannot proxy channel. Five design seeds (7, 23, 61, 101, 149); 160 held-out decisions per condition.
+
+### E12a — contrast fragments (negative)
+
+Codex added a persistent per-family `ThoughtThread`, a bounded same-action/same-scope contrast diagnosis (`ProgressiveRefiner.diagnose_causal`), and one- and two-literal `CausalHypothesis` fragments with retained support and contradiction provenance. Result: held-out reward −0.0375 vs episodic-only −0.0205 (Δ −0.017, interval [−0.120, +0.086]), and the continuity ablation produced *identical* decisions. Diagnosis of the trace: every condition chose `standard` on 90–95% of training cases, so almost no evidence about `express` existed. Every learner converged on "nearly always standard" (held-out −0.0575). Fragments also never form a complete explanation (e.g. `open AND (day OR Alex)`), so there is nothing to revise.
+
+**Headroom check.** An idealized Bayesian learner that enumerates ~5,000 small DNF rules (ε = 0.09) reaches +0.116 held-out reward from uniformly explored *bandit* data (+0.144 with full feedback); the oracle is +0.345. The benchmark can show the effect; the E12a learner could not.
+
+### E12b — one revisable explanation per action, with selector-owned exploration
+
+* **Exploration (plan item 5, done first because it is a precondition).** `ActionSelector._optimistic` adds a count-based UCB bonus κ·√(ln(1+N)/(1+nₐ)) per task scope, during training only. It is learner-agnostic, so every condition explores under the same rule; predictions stay unbiased. Held-out choices remain greedy. κ = 0.5 was fixed before measurement; κ ∈ {0.25, 1.0} were also run on E12a and did not rescue it.
+* **Explanation (plan item 2).** `OutcomeLearner.explanation_feedback` keeps an `ExplanationBank` per (domain, epoch, action): a beam of ≤48 complete rules (DNF, ≤3 terms of ≤2 literals), each scored against ≤64 retained observations under an explicit noise model (ε = 0.1) with a complexity price. Each experience *edits the current best eight rules* (add term, drop term, specialize, generalize) using literals from the new case; contrasts (plan items 1 and 3) only seed edit material. Every rule carries its operator, originating evidence id, and support and contradiction ids. `explanation_prediction` is read-only. The `ThoughtThread` records each revised explanation as a new version.
+* **Ablations (evidence-equal):** `no_continuity` rebuilds the explanation from scratch on every experience while keeping all evidence, which directly tests "revise the same explanation". `no_contrast` disables contrast seeding. `contrast_fragments` is the E12a learner.
+
+**Primary result (design seeds, κ = 0.5, 160 frozen held-out decisions per condition):**
+
+| Condition | Held-out reward | Success | All-action Brier | Training reward |
+| --- | ---: | ---: | ---: | ---: |
+| episodic_only | −0.0415 | 49.38% | 0.2364 | +0.0877 |
+| strong_one_pass | −0.0510 | 48.75% | 0.2401 | +0.0488 |
+| contrast_fragments (E12a) | −0.0510 | 51.25% | 0.2525 | +0.0613 |
+| **explanation_full** | **+0.0530** | 56.25% | **0.2091** | +0.1207 |
+| no_continuity | −0.0260 | 52.50% | 0.2538 | +0.0922 |
+| no_contrast | +0.0990 | 58.75% | 0.2070 | +0.1315 |
+
+**Fresh-seed replication (frozen design, 10 seeds never used during design, 320 decisions per condition):**
+
+| explanation_full minus | Mean Δ reward | ≈95% interval | Seeds positive |
+| --- | ---: | --- | ---: |
+| episodic_only | +0.1155 | [+0.047, +0.184] | 9/10 |
+| strong_one_pass | +0.0965 | [+0.010, +0.183] | 8/10 |
+| contrast_fragments | +0.1550 | [+0.089, +0.221] | 10/10 |
+| no_continuity | +0.1037 | [+0.012, +0.196] | 8/10 |
+| no_contrast | +0.0282 | [+0.005, +0.052] | 6/10 |
+
+Replication held-out reward: explanation_full +0.1725, episodic_only +0.0570, no_continuity +0.0688. All-action Brier: 0.2115 vs 0.2383 and 0.2716.
+
+**Without exploration (κ = 0, design seeds):** explanation_full −0.0075 vs episodic −0.0205 (Δ +0.013, interval [−0.056, +0.082]). The explanation learner explores somewhat on its own (24% express), but the decision advantage needs deliberate evidence gathering. The continuity effect survives (Δ +0.047, [+0.023, +0.071], 5/5 seeds).
+
+**Verdict:** First positive E-series result on genuinely unseen combinations. A persistent explanation that is *revised*, rather than re-derived or fragmented, predicts withheld contexts better (Brier 0.21 vs 0.24–0.27) and yields better frozen decisions than episodic memory, one-pass conditional values, and E12a. The effect replicates on fresh seeds. Removing continuity (same evidence, explanation rebuilt each time) removes most of the gain, which supports the "revise the same explanation" hypothesis specifically. **Contrast seeding is not supported:** its sign differs between design and replication seeds (−0.046, then +0.028), so plan items 1 and 3 add no demonstrated value beyond the revisable explanation.
+
+**Limitations and threats:** (1) The beam design was prototyped on the design seeds, which is a forking-paths risk; the fresh-seed replication is the evidence to rely on. (2) Synthetic world with a known small-DNF rule class; the explanation language matches it, so this does not show discovery of structure outside that language. (3) Intervals are normal approximations over 5 and 10 seeds. (4) Training reward is not uniformly better (replication: +0.067 vs episodic +0.074) because exploration has a price. (5) Held-out reward is still well below the oracle (+0.345) and near the ideal-Bayes ceiling (+0.116 on design seeds). (6) Five-axis integration (plan item 4) has not been attempted; per the E12 objective it should follow, not precede, this result.
+
+**Verification:** `tests/test_causal.py` covers forming, revising in place and predicting an unseen context; read-only prediction and replay idempotence; bounded beam and evidence; an evidence-equal continuity ablation; selector-owned, training-only exploration; a frozen held-out fork; potential-outcome isolation; and subprocess restart. Full suite: 125 passed locally (Python 3.14). `EpisodicMemory` id counters became plain integers because `itertools.count` no longer pickles on 3.14. Reproduce with `python -m scenario_chunking.causal_experiment`, which writes `results-e12/`, `results-e12/replication/` and `results-e12/no-exploration/`. Research runner only; Sonara production unchanged.

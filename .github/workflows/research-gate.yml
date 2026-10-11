@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "main"]
   pull_request:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected", "experiment/predictive-decision-value-e10"]
   workflow_dispatch:
@@ -12,6 +12,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  persistent-causal-e12:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: E12 continuity, revision, leakage and subprocess restart tests
+        run: python -m pytest -q tests/test_causal.py
+      - name: E12 frozen unseen combinations, fresh-seed replication and separate ablations
+        run: |
+          python - <<'PYTHON'
+          from scenario_chunking.causal_experiment import write_all, CONDITIONS
+          reports = write_all()
+          for name, p in reports.items():
+              seeds = len(p["seeds"])
+              assert len(p["trials"]) == seeds * len(CONDITIONS) * 4 * 32
+              assert all(v["n"] == seeds * 32 for v in p["summary"].values())
+              assert all(r["detail_events"] <= 16 for r in p["trials"])
+              assert all(r["header_evaluations"] <= 80 for r in p["trials"])
+              assert all(r["hypotheses_examined"] <= 96 for r in p["trials"])
+              assert all(not r["update"]["updated"] for r in p["trials"] if r["stage"] == "heldout")
+              print(name, p["summary"])
+              print(name, p["paired_reward_deltas"])
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e12-persistent-causal-artifacts
+          path: results-e12
+          if-no-files-found: error
+
   incremental-refinement-e11:
     runs-on: ubuntu-latest
     timeout-minutes: 18

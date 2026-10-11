@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from .models import Action, RetrievalHit
+from .models import Action, RetrievalHit, EventKind, TruthStatus
 from .state import CognitiveState
 
 
@@ -49,6 +49,8 @@ class ThoughtThread:
     initiating_episode: str
     versions: list[ThoughtVersion] = field(default_factory=list)
     outcomes: list[dict[str, object]] = field(default_factory=list)
+    # Bounded pointers into the existing episodic store, never copied events.
+    causal_anchors: dict[str, str] = field(default_factory=dict)
     activation_strength: float = 1.0
     activation_last_time: float = 0.0
 
@@ -81,10 +83,10 @@ class ProgressiveRefiner:
         self.threads: dict[tuple[str, str], ThoughtThread] = {}
 
     def thread(self, state: CognitiveState) -> ThoughtThread:
-        key = (state.episode_id, state.goal_id)
+        key = (getattr(state, "thought_key", None) or state.episode_id, state.goal_id)
         if key not in self.threads:
             self.threads[key] = ThoughtThread(
-                thought_id=f"{state.episode_id}:{state.goal_id}",
+                thought_id=f"{key[0]}:{state.goal_id}",
                 initiating_episode=state.episode_id,
                 initiating_goal=state.goal_id,
             )
@@ -529,6 +531,71 @@ class ProgressiveRefiner:
             "activation_state": thread.status_at(state.current_time),
         }
 
+    def record_causal_revision(self, state: CognitiveState, update: dict, outcome) -> dict:
+        """Record the learner's revision in the SAME explanation thread."""
+        thread = self.thread(state)
+        self._focus(thread, state.current_time)
+        hypotheses = tuple(update.get("hypotheses", ()))
+        signature = (outcome.event_id, tuple(update["updated"]))
+        if len(thread.versions) < self.max_versions:
+            thread.versions.append(ThoughtVersion(
+                number=len(thread.versions) + 1, preferred_action="",
+                alternatives=(), evidence_ids=(outcome.event_id,), memory_chunk_ids=(),
+                contradictions=tuple(sorted({eid for h in hypotheses for eid in h["contradictions"]})),
+                uncertainty=1-min((h["confidence"] for h in hypotheses), default=0.0),
+                reason=("explanation_revised" if update.get("revised")
+                        else "observed_evidence_revision"), signature=signature,
+                time=state.current_time, hypotheses=hypotheses))
+        thread.outcomes.append({"episode_id": state.episode_id,
+                                "event_id": outcome.event_id, "updated": update["updated"],
+                                "explanation": update.get("explanation")})
+        del thread.outcomes[:-self.max_versions]
+        return {"thought_id": thread.thought_id, "version": len(thread.versions),
+                "updated": update["updated"], "evidence_id": outcome.event_id,
+                "explanation_before": update.get("explanation_before"),
+                "explanation": update.get("explanation"), "revised": update.get("revised", False)}
+
+    def diagnose_causal(self, state: CognitiveState, outcome, retrieved_events, *,
+                        probability: float) -> dict:
+        """Bounded same-action/scope contrast selection on observed surprise.
+
+        The only inputs are the actual outcome and already activated events.
+        Changed conditions suggest explanations, not verified causality.
+        """
+        cues = frozenset(outcome.metadata["context_cues"])
+        procedure = outcome.metadata["procedure"]
+        scope = self.learner.causal_scope(cues)
+        success = outcome.outcome == "success"
+        prediction_error = abs(float(success) - probability)
+        candidates = []
+        for previous in retrieved_events:
+            old = frozenset(previous.metadata.get("context_cues", ()))
+            if (previous.kind != EventKind.OUTCOME or previous.truth_status != TruthStatus.OUTCOME
+                    or previous.outcome not in ("success", "failure") or not previous.cause_event_id
+                    or previous.metadata.get("procedure") != procedure
+                    or previous.goal_id != state.goal_id
+                    or self.learner.causal_scope(old) != scope
+                    or previous.outcome == outcome.outcome):
+                continue
+            # Two literal differences correspond to one changed axis.
+            if len(old ^ cues) == 2:
+                candidates.append(previous)
+        candidates.sort(key=lambda e: (-e.occurrence_time, e.event_id))
+        old = candidates[0] if candidates and prediction_error >= .25 else None
+        thread = self.thread(state)
+        # Existing bounded task register retains the latest outcome of each
+        # available procedure; the router decides its later activation.
+        thread.causal_anchors[procedure] = outcome.event_id
+        while len(thread.causal_anchors) > 2:
+            del thread.causal_anchors[next(iter(thread.causal_anchors))]
+        return {"prediction_error": prediction_error,
+                "examined_events": len(retrieved_events),
+                "contrast": None if old is None else {
+                    "cues": list(old.metadata["context_cues"]),
+                    "procedure": procedure, "success": old.outcome == "success",
+                    "evidence_id": old.event_id},
+                "reason": "candidate_explanation" if old else "insufficient_comparable_evidence"}
+
     def refine_incremental(self, state: CognitiveState, scored, hits, *,
                            context: dict):
         """Single evidence-grounded, cost-sensitive reconsideration.
@@ -563,9 +630,11 @@ class ProgressiveRefiner:
                 alternatives=tuple(row[1].label for row in direct if row[1] != best[1]),
                 evidence_ids=evidence,
                 memory_chunk_ids=tuple(hit.chunk_id for hit in hits),
-                contradictions=(),
+                contradictions=tuple(sorted({eid for p in predictions.values()
+                    for h in p.get("hypotheses", ()) for eid in h["contradictions"]})),
+                hypotheses=tuple(h for p in predictions.values() for h in p.get("hypotheses", ())),
                 uncertainty=predictions[best[1].label]["uncertainty"],
-                reason="conditional_evidence_and_decision_risk",
+                reason=context.get("reason", "conditional_evidence_and_decision_risk"),
                 signature=signature, time=state.current_time,
                 predicted_outcomes=tuple(sorted(
                     (key, v["probability"]) for key, v in predictions.items())),
@@ -580,7 +649,8 @@ class ProgressiveRefiner:
             "meaningfully_changed_action": best[1] != direct[0][1],
             "contributing_evidence_ids": list(evidence),
             "additional_detailed_reads": 0,
-            "decision_basis": "evidence_risk_adjusted",
+            "decision_basis": context.get("reason", "evidence_risk_adjusted"),
+            "prediction": predictions[best[1].label]["probability"],
         }
 
     def refine_temporal(self, state: CognitiveState, scored, hits, *, context: dict):
