@@ -249,7 +249,8 @@ class CognitiveState:
         if self.goal_id == "response_dispatch":
             return RetrievalQuery(
                 goal_id=self.goal_id,
-                semantic_tags=self.context_cues | frozenset({"goal:response_dispatch"}),
+                semantic_tags=frozenset(cue for cue in self.context_cues if "&" not in cue) |
+                frozenset({"goal:response_dispatch", "procedure:standard", "procedure:express"}),
                 current_time=self.current_time,
                 desired_event_kinds=frozenset({EventKind.ACTION, EventKind.OUTCOME}),
             )
