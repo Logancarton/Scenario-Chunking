@@ -674,7 +674,10 @@ def run_transfer_experiment(output_dir: str | Path, *,
         trials = [r for run in group for r in run["rounds"]]
         return {
             "completion_rate": statistics.mean(float(t["success"]) for t in trials),
+            "recovered_goal_rate": statistics.mean(float(t["recovered_success"]) for t in trials),
+            "budget_compliance_rate": statistics.mean(float(t["within_budget"]) for t in trials),
             "initial_plan_accuracy": statistics.mean(float(t["initial_plan_correct"]) for t in trials),
+            "mean_verification_actions": statistics.mean(t["verification_actions"] for t in trials),
             "mean_actions": statistics.mean(t["actions"] for t in trials),
             "mean_wrong_decisions": statistics.mean(t["wrong_decisions"] for t in trials),
             "mean_brier": statistics.mean(r["brier"] for r in group if r["brier"] is not None),
@@ -695,6 +698,14 @@ def run_transfer_experiment(output_dir: str | Path, *,
             },
             "round_completion": [
                 statistics.mean(float(r["rounds"][i]["success"]) for r in group)
+                for i in range(rounds)
+            ],
+            "round_recovery": [
+                statistics.mean(float(r["rounds"][i]["recovered_success"]) for r in group)
+                for i in range(rounds)
+            ],
+            "round_initial_plan_accuracy": [
+                statistics.mean(float(r["rounds"][i]["initial_plan_correct"]) for r in group)
                 for i in range(rounds)
             ],
         }
