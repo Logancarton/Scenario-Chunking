@@ -393,6 +393,7 @@ class ContextualTask:
     self_relevance: float
     revision_notice: bool
     profile: str
+    protocol_epoch: str
 
     def public(self) -> dict:
         return {
@@ -403,6 +404,7 @@ class ContextualTask:
             "consequence": self.consequence,
             "self_relevance": self.self_relevance,
             "revision_notice": self.revision_notice,
+            "protocol_epoch": self.protocol_epoch,
         }
 
 
@@ -453,8 +455,12 @@ class ContextualWorld:
             source=source, context=context,
             consequence=(.25, .7, 1.0)[complexity - 1],
             self_relevance=(.3, .65, .95)[complexity - 1],
-            revision_notice=complexity == 3 and not is_correct,
+            revision_notice=(complexity == 3 and not is_correct)
+                            or (complexity == 3 and index % 2 == 1),
             profile=("simple", "uncertain", "adversarial")[complexity - 1],
+            protocol_epoch=("v2" if index >= 500 and not heldout
+                            or (heldout and complexity == 3 and index % 2 == 1)
+                            else "v1"),
         )
 
     @staticmethod
@@ -466,6 +472,8 @@ class ContextualWorld:
             raise ValueError("unknown procedure")
         # The agent observes outcomes only; it never receives this equation.
         bit0 = self._bit(task.mode, "cold") ^ self._bit(task.actual_dependency, "unstable")
+        if task.protocol_epoch == "v2" and task.mode == "cold":
+            bit0 ^= 1  # Procedural reversal: earlier successes remain historically true.
         bit1 = self._bit(task.material, "sealed") ^ self._bit(task.phase, "recovery")
         return procedure == self.PROCEDURES[bit0 + 2 * bit1]
 
@@ -482,6 +490,8 @@ class ContextualWorld:
             f"pair:material={public['material']}|phase={public['phase']}",
             f"pair:context={public['context']}|source={public['source']}",
             f"pair:mode={public['mode']}|material={public['material']}",
+            f"pair:protocol={public['protocol_epoch']}|mode={public['mode']}",
+            f"protocol:{public['protocol_epoch']}",
             f"pair:consequence={public['consequence']}|self={public['self_relevance']}",
             f"source:{public['source']}|context:{public['context']}",
             f"mode:{public['mode']}", f"dependency:{dep}",
