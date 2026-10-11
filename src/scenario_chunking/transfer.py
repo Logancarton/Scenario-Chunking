@@ -364,7 +364,7 @@ class TransferRun:
                 self.cost["counterfactual_evaluations"] += audit["evaluations"]
             shadow = ActionSelector(self.memory, self.learner, random.Random(rng_seed)).select(
                 state, actions, hits, transfer_scores=onepass).action.label
-         latency = (perf_counter() - started) * 1000.0
+        latency = (perf_counter() - started) * 1000.0
         self.cost["decisions"] += 1
         self.cost["selection_ms"] += latency
         relevant = audits.get(decision.action.label, {})
