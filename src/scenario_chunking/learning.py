@@ -5,6 +5,10 @@ from dataclasses import dataclass
 import math
 
 
+def _two_zero_counts() -> list[float]:
+    return [0.0, 0.0]
+
+
 @dataclass
 class ActionTrace:
     event_id: str
@@ -41,7 +45,7 @@ class OutcomeLearner:
         self.prerequisite_observations: dict[tuple[str, str], int] = defaultdict(int)
         # Contextual outcomes are statistics of observed causal attempts, not a
         # second memory store. Source events remain in EpisodicMemory.
-        self.context_counts: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
+        self.context_counts: dict[tuple[str, str], list[float]] = defaultdict(_two_zero_counts)
         self.context_evidence_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
         self.focus_value: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
         self.inspect_value: list[float] = [1.0, 1.0]
