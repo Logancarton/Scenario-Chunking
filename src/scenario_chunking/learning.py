@@ -46,6 +46,7 @@ class OutcomeLearner:
         # Contextual outcomes are statistics of observed causal attempts, not a
         # second memory store. Source events remain in EpisodicMemory.
         self.context_counts: dict[tuple[str, str], list[float]] = defaultdict(_two_zero_counts)
+        self.context_base_counts: dict[str, list[float]] = defaultdict(_two_zero_counts)
         self.context_evidence_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
         self.focus_value: dict[str, list[float]] = defaultdict(_two_zero_counts)
         self.inspect_value: list[float] = [1.0, 1.0]
@@ -70,6 +71,10 @@ class OutcomeLearner:
                 for before, after in self.prerequisite_observations if after == dependent}
 
 
+    def contextual_base_probability(self, procedure: str) -> float:
+        yes, no = self.context_base_counts[procedure]
+        return (yes + 1.0) / (yes + no + 2.0)
+
     def contextual_probability(self, cue: str, procedure: str) -> tuple[float, float]:
         """Bounded Beta posterior over actual observed action outcomes."""
         yes, no = self.context_counts[(cue, procedure)]
@@ -83,16 +88,25 @@ class OutcomeLearner:
         """
         relations = sorted(cue for cue in cues if cue.startswith("pair:"))
         scores, ids = [], []
+        base = self.contextual_base_probability(procedure)
+        base_log_odds = math.log(max(.05, base) / max(.05, 1 - base))
         for cue in relations:
             probability, count = self.contextual_probability(cue, procedure)
             if count:
-                # A confidence-bounded likelihood ratio; repetitions cannot
-                # make belief arbitrarily strong or irrevocable.
+                # Compare against the outcome's *action-specific base rate*.
+                # Merely predicting common failures is not cognitive relevance.
                 strength = min(1.0, count / 12.0)
-                scores.append(strength * math.log(
-                    max(.05, probability) / max(.05, 1 - probability)))
+                conditional_log_odds = math.log(
+                    max(.05, probability) / max(.05, 1 - probability))
+                gain = conditional_log_odds - base_log_odds
+                attention = self.focus_value[cue]
+                relevance = max(.15, min(1.0, .5 + 4 * attention[0]))
+                scores.append((strength * relevance * gain,
+                               strength * relevance))
                 ids.extend(self.context_evidence_ids.get((cue, procedure), ()))
-        return {"score": sum(scores) / max(1, len(relations)),
+        normalizer = sum(weight for _, weight in scores)
+        return {"score": sum(score for score, _ in scores) /
+                         max(1.0, normalizer),
                 "evidence_ids": sorted(set(ids)),
                 "covered_relations": len(scores),
                 "relation_count": len(relations)}
@@ -102,6 +116,7 @@ class OutcomeLearner:
         """Learn from an observed action, never a supplied correct answer."""
         if not self.enabled:
             return
+        baseline = self.contextual_base_probability(procedure)
         for cue in sorted(c for c in cues if c.startswith("pair:")):
             prior, sample_size = self.contextual_probability(cue, procedure)
             key = (cue, procedure)
@@ -118,12 +133,18 @@ class OutcomeLearner:
                 ids.append(evidence_id)
                 del ids[:-12]
             # Causal feedback adjusts attention quality by predictive gain.
-            baseline_error = (0.5 - float(success)) ** 2
+            baseline_error = (baseline - float(success)) ** 2
             pair_error = (prior - float(success)) ** 2
             value = baseline_error - pair_error
             quality = self.focus_value[cue]
             quality[0] = .96 * quality[0] + .04 * value
             quality[1] += 1
+        yes, no = self.context_base_counts[procedure]
+        if yes + no > 120:
+            yes *= .97
+            no *= .97
+        self.context_base_counts[procedure] = [
+            yes + float(success), no + float(not success)]
 
     def select_context_focus(self, cues: frozenset[str], *,
                              learned: bool, budget: int = 2) -> frozenset[str]:
