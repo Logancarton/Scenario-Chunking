@@ -23,7 +23,7 @@ class ActionSelector:
         self.refiner = refiner
 
     def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit], *,
-               refine: bool = False) -> SelectionDecision:
+               refine: bool = False, transfer_scores: dict[str, float] | None = None) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
         scored: list[tuple[float, Action, list[str], object]] = []
@@ -34,7 +34,9 @@ class ActionSelector:
             base = self._base_prior(action)
             learned = self.learner.expected_utility(features)
             frame = None
-            if self.interpreter is not None:
+            if transfer_scores is not None:
+                memory_evidence = max(-0.45, min(0.45, transfer_scores.get(action.label, 0.0)))
+            elif self.interpreter is not None:
                 frame = self.interpreter.evaluate(
                     state, action, hits,
                     learn_layers=self.meaning_mode in ("learned", "adaptive"),
