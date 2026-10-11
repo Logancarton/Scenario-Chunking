@@ -422,7 +422,8 @@ class ContextualWorld:
     # causal sub-relations were individually encountered during training.
     HOLDOUT_KEYS = ((0, 0, 0, 0), (1, 0, 1, 0),
                     (0, 1, 1, 1), (1, 1, 0, 1))
-    TRAIN_KEYS = tuple(x for x in FACTORS if x not in HOLDOUT_KEYS)
+    TRAIN_KEYS = tuple(x for x in FACTORS if x not in (
+        (0, 0, 0, 0), (1, 0, 1, 0), (0, 1, 1, 1), (1, 1, 0, 1)))
 
     def __init__(self, seed: int) -> None:
         self.seed = seed
