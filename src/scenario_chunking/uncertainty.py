@@ -68,18 +68,28 @@ class UncertaintyRun(TransferRun):
                                "Cinder": .75 if context == "day" else .27}[person]
                 claimed = (actual if rng.random() < reliability
                            else rng.choice([x for x in choices if x != actual]))
-                # Training knows the outcome only by taking the action.
+                # Choose a random sequence of probes; verify the claim only
+                # after causal feedback identifies a successful candidate.
                 self.learner.begin_episode()
-                self._feedback(
-                    f"source-verification-{context}-{i}", i,
-                    Action("resolve", actual, axis), True,
-                    source="measured_training_trial",
-                )
-                self.learner.verify_source(person, context, claimed == actual)
+                probes = list(choices)
+                rng.shuffle(probes)
+                observed = None
+                for candidate in probes:
+                    accepted = self.world.accepted(axis, candidate)
+                    self._feedback(
+                        f"source-verification-{context}-{i}", i,
+                        Action("resolve", candidate, axis), accepted,
+                        source="measured_training_trial")
+                    if accepted:
+                        observed = candidate
+                        break
+                if observed is None:
+                    raise RuntimeError("no verified training choice")
+                self.learner.verify_source(person, context, claimed == observed)
                 self.source_checks.append({
                     "person": person, "context": context,
-                    "claimed": claimed, "observed": actual,
-                    "correct": claimed == actual,
+                    "claimed": claimed, "observed": observed,
+                    "correct": claimed == observed,
                 })
         # Causal, observed blocked attempts establish ordered dependencies.
         for attempt_round in range(10):
