@@ -200,6 +200,15 @@ class CognitiveState:
         return actions
 
     def action_features(self, action: Action) -> frozenset[str]:
+        if self.goal_id == "temporal_decisions":
+            signals = {"goal:temporal_decisions", f"action:{action.kind}"}
+            if action.target:
+                signals.add(f"person:{action.target}")
+                expectation = self.timed_expectations.get("delivery:" + action.target)
+                if expectation:
+                    signals.add(f"state:{expectation.status}")
+                    signals.add(f"context:{expectation.context}")
+            return frozenset(signals)
         features = {
             f"goal:{self.goal_id}",
             f"action:{action.kind}",
