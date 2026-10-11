@@ -57,6 +57,9 @@ class CognitiveState:
     goal_complete: bool = False
     track_outcome_contradictions: bool = False  # Historical scorer remains a frozen comparison
 
+    # Cross-experience E11 context; events are stored in the existing memory.
+    context_cues: frozenset[str] = frozenset()
+
     def schedule_temporal(self, *, expectation_id: str, subject: str, context: str,
                           source_event_id: str, due_at: float, confidence: float) -> TimedExpectation:
         if (not expectation_id or not source_event_id or not subject or not context
