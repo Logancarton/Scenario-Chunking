@@ -322,8 +322,9 @@ class ProgressiveRefiner:
         direct = sorted(scored, key=lambda row: (-row[0], row[1].label))
         decisions = context.get("audits", {})
         invalidated = set(getattr(state, "invalidated_since", {}))
+        resolved = set(context.get("resolved_change_axes", ()))
         validity_unresolved = []
-        for axis in sorted(invalidated):
+        for axis in sorted(invalidated - resolved):
             applicable = any(
                 record.get("provenance", {}).get(cue)
                 for record in decisions.values()
@@ -336,7 +337,7 @@ class ProgressiveRefiner:
         # The refiner may activate it only when evidence shows the old
         # relationship has become inapplicable and current truth is unknown.
         investigate = next(
-            (row for row in direct if row[1].kind == "inspect_protocol"
+            (row for row in direct if row[1].kind in ("inspect_protocol", "inspect_dependencies")
              and row[1].key_name in validity_unresolved), None
         )
         reason = "evidence_already_sufficient"
