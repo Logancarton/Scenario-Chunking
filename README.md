@@ -296,3 +296,27 @@ The four-choice `UncertaintyWorld` does not construct a correct proposed plan fo
 The active pathway reuses `MemoryRouter`, `EpisodicMemory`, `MeaningInterpreter`, `ActionSelector`, `ProgressiveRefiner` and `OutcomeLearner`. The refiner may request a costly instrument check, but does not gain invisible access to ground truth. The benchmark reports all seven main reasoning conditions plus larger retrieval, corrupted-testimony, category ablations and per-seed outcomes. See `results-uncertainty/uncertainty_summary.json` and `uncertainty_trials.json`.
 
 **Important limitations:** the underlying role tokens remain shared between training and transfer; these are not genuinely held-out causal *combinations*. Blocked-predecessor feedback explicitly names a prerequisite. The strong one-pass baseline is measured, but not strictly compute-matched with iterative reflection. Serialization restoration is verified in-process by the runner and independently in a focused subprocess test. A positive cognitive benefit must come from observed benchmark metrics, not from test passage or architecture presence.
+
+## Experiment 8 — cumulative experience and bounded cognitive focus
+
+The independent research branch `experiment/cognitive-scaling-e8` adds a cumulative-training challenge **without changing Sonara production**. It keeps one episodic memory/learner across checkpoints while testing learned category priority and optional bounded, context-linked retrieval against the Experiment 7 selectors.
+
+Quick gate (one seed, small scales):
+
+```bash
+scenario-chunking --scaling --output results-scaling --seeds 7 --rounds 2 \
+  --training-stages 20,100 --memory-stages 100,500 \
+  --scaling-conditions untrained_structural,strong_one_pass,adaptive_focus,bounded_without_learned_focus \
+  --candidate-budget 32
+```
+
+Full configured study (substantial memory and compute demand):
+
+```bash
+scenario-chunking --scaling --output results-scaling-full \
+  --seeds $(seq -s, 1 30) --rounds 4 \
+  --training-stages 20,100,500,2000,10000 \
+  --memory-stages 100,1000,5000,20000,20000
+```
+
+Outputs: `scaling_summary.json` and `scaling_trials.json`, with stage-specific seed results, memory counts, active detail reads, bounded candidate-header evaluations, decision outcomes and paired intervals. **This study is not yet proof of superior general reasoning**: the candidate worlds retain Experiment 7's five-category grammar, compute is measured but not strictly matched, and a learned reflection stopping policy remains future work. See `docs/COGNITIVE_RESEARCH_JOURNAL.md`.
