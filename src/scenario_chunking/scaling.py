@@ -28,6 +28,7 @@ CONDITIONS_8 = {
     "limited_reflection": "limited_reflection",
     "extended_reflection": "extended_reflection",
     "adaptive_focus": "limited_reflection",
+    "learned_focus_one_pass": "full_no_reflection",
     "bounded_without_learned_focus": "limited_reflection",
     "larger_retrieval": "larger_retrieval",
     "shuffled_evidence": "shuffled_evidence",
@@ -174,7 +175,7 @@ class ScalingRun(UncertaintyRun):
                 dependency: str, verified: bool, decision_number: int) -> tuple:
         public = task.public()
         cues = self.world.relational_cues(public, dependency=dependency)
-        learned_focus = self.treatment == "adaptive_focus"
+        learned_focus = self.treatment in ("adaptive_focus", "learned_focus_one_pass")
         if self.treatment in ("adaptive_focus", "bounded_without_learned_focus"):
             focus = self.learner.select_context_focus(
                 cues, learned=learned_focus, budget=2) if learned_focus else frozenset(
@@ -485,12 +486,33 @@ def run_scaling_experiment(
                 "by_seed": seed_deltas,
                 "bootstrap_95_interval": _paired_interval(list(seed_deltas.values())),
             }
+    # Isolate reflection itself: same learned focus and retrieval budget.
+    reflection_paired = {}
+    if {"adaptive_focus", "learned_focus_one_pass"}.issubset(conditions):
+        for stage, checkpoint in enumerate(stages):
+            a = {(r["seed"], r["complexity"], r["memory_target"]): r
+                 for r in trials if r["stage"] == stage and
+                 r["treatment"] == "adaptive_focus"}
+            b = {(r["seed"], r["complexity"], r["memory_target"]): r
+                 for r in trials if r["stage"] == stage and
+                 r["treatment"] == "learned_focus_one_pass"}
+            by_seed = defaultdict(list)
+            for key in sorted(a):
+                by_seed[key[0]].append(
+                    a[key]["completion_rate"] - b[key]["completion_rate"])
+            seed_values = {seed: statistics.mean(values)
+                           for seed, values in sorted(by_seed.items())}
+            reflection_paired[str(checkpoint)] = {
+                "by_seed": seed_values,
+                "bootstrap_95_interval": _paired_interval(list(seed_values.values())),
+            }
     payload = {
         "experiment": 8, "design": "factorial_shared_heldout_context",
         "seeds": list(seeds), "stages": list(stages),
         "memory_targets": list(memory_targets),
         "complexities": list(complexities), "conditions": list(conditions),
         "stage_results": rows, "paired_focus_vs_onepass": paired,
+        "paired_reflection_only": reflection_paired,
         "limitations": [
             "Procedural contextual reasoning only: no natural-language general cognition claim.",
             "World causal rule is fixed across scenarios but synthetic and small.",
