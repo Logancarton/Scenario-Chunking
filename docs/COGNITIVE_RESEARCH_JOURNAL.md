@@ -381,3 +381,66 @@ Run: https://github.com/Logancarton/Scenario-Chunking/actions/runs/38102511995
 At 100 experience steps, adaptive learned focus averaged 32 evaluated headers/decision versus 232 for the larger-access one-pass comparator. Both capped treatments were limited to 32 candidate headers. However learned focus finished **0/2** tasks; the otherwise bounded condition without category selection finished **1/2**. Thus **the candidate-budget mechanism reduced header processing, but learned category prioritization did not show better reasoning** in the smoke test and may be discarding important alternatives. No inference of statistical significance is warranted.
 
 **Priority for next research iteration:** separate category-focus quality from purely reducing the candidate-header budget. Add paired exact information/compute controls and harder novel causal combinations, then evaluate learning curves over 30 seeds if computationally practical. Do not increase reflection merely to improve completion.
+
+## Experiment 8 correction — held-out contextual causal scaling
+
+**Branch:** \`experiment/cognitive-scaling-e8-corrected\`. This entry supersedes the
+initial E8 architecture as a test of causal scaling; the earlier implementation
+record and negative result are retained for provenance.
+
+**Why corrected:** E8 initially treated \`self\`, \`salience\`, \`time\`,
+\`sequence\`, and \`person\` as five independent procedural symbol choices.
+Its learned focus prioritized only two predetermined categories using
+prerequisite heuristics, and the hidden evaluation world changed with each
+checkpoint. It could neither cleanly measure experience effects nor demonstrate
+genuinely learned, compositional causal understanding.
+
+**New live research path:** \`ContextualWorld\` owns the private procedure
+equation and instrument outcomes. Every problem has four plausible intervention
+choices and one joint scene carrying time/protocol, source, consequence,
+self-relevance, condition and dependencies. \`EpisodicMemory\` keeps immutable
+events; \`OutcomeLearner\` accumulates outcome-conditioned relationship
+statistics and attribution/attention utility and retains source verification.
+\`MemoryRouter\` provides bounded indexed retrieval; \`MeaningInterpreter\`
+combines provenance-bearing episodic evidence with revisable learned contextual
+relationships and appropriately weighted testimony. \`ProgressiveRefiner\`
+preserves thought identity, revises evidence-backed preferences and can choose
+inspection or stop; \`ActionSelector\` remains the one action authority.
+\`scaling.py\` sequences owners but contains no duplicate selector.
+
+**Experiment validity:** Frozen held-out combinations cover all four possible
+procedure outcomes. Their sub-relations appear in training but the joint
+combinations do not. Each treatment has identical public signals and the
+same exploratory training interventions; outcomes come from actual attempts,
+not a generated answer plan. Training checkpoints maintain one original
+persistent learner/memory. Test episodes operate on forks. Added distractors
+and difficulty vary factorially and independently from training volume.
+Statistics report by-seed completion, first procedural action, action and
+inspection cost, active event reads, header evaluations, causal retrieval
+precision/recall/misses, latency, reflection versions and paired seed deltas.
+Time/protocol changes are observed as epoch-bearing situations and new
+outcomes can revise conditional knowledge without rewriting old events.
+
+**Verified two-seed smoke (four distinct held-out procedures, two complexities,
+two independent memory loads, four conditions):** 13 focused tests and the
+end-to-end smoke passed in GitHub Actions. Completion by 20 / 100 / 500
+training experiences: untrained 38% / 38% / 38%;
+strong one-pass 28% / 56% / 44%;
+adaptive learned focus 38% / 56% / 53%;
+bounded without learned focus 28% / 56% / 44%.
+These values pool correlated cells from only two independent seeds, so they
+do **not** establish a statistically reliable improvement. At the highest
+smoke checkpoint adaptive focus was 53% versus 44% for one-pass, but its
+retrieval and reflection are not precisely compute-matched. No robust
+generalization claim follows.
+
+**Remaining limitations:** This is a small, transparent synthetic conditional
+causal world; there is no open-ended symbolic concept invention, no natural
+language or multimodal input, and no claim of broad human-like cognition.
+Category selection is learned through predictive feedback, but a rigorously
+outcome-optimized reflection stopping policy is not proven; learned inspection
+value is an observed information-gain proxy. Source confidence does not yet
+model full counterfactual testimony. The research still needs 30 independent
+seeds, more diverse held-out causal transformations, strict information/compute
+matching, longer-term interference controls and a complete 10k/20k run before
+any superiority or mature learning curve can be asserted.
