@@ -22,6 +22,7 @@ from .models import Event, EventKind, TruthStatus, RetrievalMode
 from .policy import ActionSelector
 from .refinement import ProgressiveRefiner
 from .retrieval import MemoryRouter
+from .spreading import SpreadBudget
 from .state import CognitiveState
 
 CONDITIONS = (
@@ -74,8 +75,11 @@ class IncrementalRun:
         self.memory = EpisodicMemory()
         self.learner = OutcomeLearner(enabled=mode not in ("frozen", "episodic_only"))
         self.interpreter = MeaningInterpreter(self.memory, self.learner)
-        self.router = MemoryRouter(self.memory, RetrievalMode.STRUCTURAL,
-                                   top_k=top_k, candidate_budget=48)
+        self.router = MemoryRouter(
+            self.memory, RetrievalMode.SPREADING, top_k=top_k,
+            candidate_budget=48, spread_budget=SpreadBudget(
+                max_additional_chunks=4, max_neighbor_headers=32,
+                max_total_detail_events=16))
         self.refiner = ProgressiveRefiner(self.learner)
         self.selector = ActionSelector(self.memory, self.learner,
                                        random.Random(seed), refiner=self.refiner)
