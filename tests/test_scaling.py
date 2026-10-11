@@ -128,6 +128,28 @@ def test_refiner_preserves_thought_identity_across_observation_and_stop():
     assert revision["version"] > trace["version"]
 
 
+def test_one_pass_and_reflection_use_identical_learned_focus_evidence():
+    a = ScalingRun(17, "adaptive_focus", rounds=1, candidate_budget=24)
+    b = ScalingRun(17, "learned_focus_one_pass", rounds=1, candidate_budget=24)
+    a.add_experiences(30)
+    b.add_experiences(30)
+    task = ContextualWorld(8017).task(0, heldout=True)
+    state_a = TransferState(episode_id="equal-task")
+    state_b = TransferState(episode_id="equal-task")
+    a._public_observation(task, "equal-task")
+    b._public_observation(task, "equal-task")
+    _, trace_a = a._decide(
+        task, state_a, dependency=task.reported_dependency,
+        verified=False, decision_number=0)
+    _, trace_b = b._decide(
+        task, state_b, dependency=task.reported_dependency,
+        verified=False, decision_number=0)
+    assert trace_a["focus_cues"] == trace_b["focus_cues"]
+    assert trace_a["retrieved_chunk_ids"] == trace_b["retrieved_chunk_ids"]
+    assert trace_a["header_evaluations"] == trace_b["header_evaluations"]
+    assert trace_b["thought"] is None
+
+
 def test_bounded_retrieval_activates_same_live_selector_under_noise():
     a = ScalingRun(23, "adaptive_focus", rounds=2, candidate_budget=24)
     a.add_experiences(40)
