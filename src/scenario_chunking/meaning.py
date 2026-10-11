@@ -124,62 +124,88 @@ class MeaningInterpreter:
         # Do not transfer success of an arbitrary historical key to another key.
         return recorded.kind != "try_key" or recorded.key_name == candidate.key_name
 
-    def transfer_evidence(self, hits, features: frozenset[str], *, review_depth: int = 0):
-        """Evaluate cross-category causal outcomes from retrieved memory only.
+    def transfer_evidence(self, hits, features: frozenset[str], *,
+                          review_depth: int = 0,
+                          invalidated_since: dict[str, float] | None = None):
+        """Evaluate provenance-bearing causal outcomes against observed validity changes.
 
-        A prediction, an unverified report, and an observation are NOT outcomes.
-        A deeper review spends extra processing to resolve chronological conflicts,
-        without writing inferred truths or accessing task-generator labels.
+        An observed change notice invalidates old applicability, not the historical
+        facts. A documented current protocol can inform a provisional prediction
+        but is not recast as an observed action outcome. Rumors are never promoted.
         """
         from collections import defaultdict
+        invalidated_since = invalidated_since or {}
         records = defaultdict(dict)
         evaluations = 0
+        invalidated = 0
         for hit in hits:
             events = self.memory.chunk_events(hit.chunk_id)
             attempts = {e.event_id: e for e in events if e.kind == EventKind.ACTION}
             evaluations += len(events)
             for event in events:
-                if (event.kind != EventKind.OUTCOME or
-                        event.truth_status != TruthStatus.OUTCOME or
-                        event.outcome not in ("success", "failure")):
+                causal = (
+                    event.kind == EventKind.OUTCOME and
+                    event.truth_status == TruthStatus.OUTCOME and
+                    event.outcome in ("success", "failure") and
+                    event.cause_event_id in attempts
+                )
+                protocol = (
+                    event.kind == EventKind.OBSERVATION and
+                    event.truth_status == TruthStatus.FACT and
+                    event.metadata.get("source_status") == "current_protocol" and
+                    isinstance(event.metadata.get("reported_axis"), str) and
+                    isinstance(event.metadata.get("reported_token"), str)
+                )
+                if causal:
+                    attempt = attempts[event.cause_event_id]
+                    axis = attempt.action.key_name if attempt.action else None
+                    token = attempt.action.target if attempt.action else None
+                    value = 1.0 if event.outcome == "success" else -1.0
+                    provenance = "causal_outcome"
+                elif protocol:
+                    axis = event.metadata["reported_axis"]
+                    token = event.metadata["reported_token"]
+                    value = 0.9
+                    provenance = "protocol_observation"
+                else:
                     continue
-                attempt = attempts.get(event.cause_event_id)
-                if attempt is None:
-                    continue
-                axis = attempt.action.key_name if attempt.action else None
-                token = attempt.action.target if attempt.action else None
                 cue = f"signal:{axis}:{token}"
                 if cue not in features:
                     continue
+                if event.occurrence_time < invalidated_since.get(axis, float("-inf")):
+                    invalidated += 1
+                    continue
                 sid = str(event.metadata.get("source_event_id") or event.event_id)
                 records[cue][sid] = (
-                    event.occurrence_time,
-                    1.0 if event.outcome == "success" else -1.0,
+                    event.occurrence_time, value,
                     max(0.0, min(1.0, event.confidence)),
-                    event.event_id,
+                    event.event_id, provenance,
                 )
         category_values = {}
         provenance = {}
+        source_types = {}
         for cue in sorted(f for f in features if f.startswith("signal:")):
             history = sorted(records.get(cue, {}).values(), key=lambda r: (r[0], r[3]))
-            # These are alternative evidence-handling budgets, not hidden labels.
-            # Only outcome events with an observed cause may influence the score.
             if review_depth == 1:
                 chosen = history[-6:]
             elif review_depth >= 3:
                 chosen = history[-3:]
             else:
                 chosen = history
-            evaluations += (len(chosen) * max(0, review_depth))
+            evaluations += len(chosen) * max(0, review_depth)
             total = sum(r[2] for r in chosen)
-            value = (sum(r[1] * r[2] for r in chosen) / total) if total else 0.0
-            category_values[cue] = value
+            category_values[cue] = (
+                sum(r[1] * r[2] for r in chosen) / total if total else 0.0
+            )
             provenance[cue] = [r[3] for r in chosen]
+            source_types[cue] = sorted({r[4] for r in chosen})
         return {
             "score": sum(category_values.values()) / max(1, len(category_values)),
             "categories": category_values,
-            "evidence_ids": sorted({eid for values in provenance.values() for eid in values}),
+            "evidence_ids": sorted({eid for ids in provenance.values() for eid in ids}),
             "provenance": provenance,
+            "source_types": source_types,
+            "invalidated_evidence": invalidated,
             "evaluations": evaluations,
         }
 
