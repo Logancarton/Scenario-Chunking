@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import pickle
 import subprocess
 import sys
@@ -10,6 +11,9 @@ import pytest
 
 from scenario_chunking.environment import ContextualWorld
 from scenario_chunking.learning import OutcomeLearner
+from scenario_chunking.refinement import ProgressiveRefiner
+from scenario_chunking.state import TransferState
+from scenario_chunking.models import Action
 from scenario_chunking.scaling import ScalingRun, run_scaling_experiment
 
 
@@ -71,6 +75,57 @@ def test_evidence_based_attention_is_learned_from_predictive_value():
     focus = l.select_context_focus(
         frozenset({relevant, irrelevant}), learned=True, budget=1)
     assert focus == frozenset({relevant})
+
+
+def test_procedural_epoch_reversal_is_learnable_and_historical_evidence_survives():
+    world = ContextualWorld(23)
+    later = next(world.task(i) for i in range(500, 600)
+                 if world.task(i).mode == "cold")
+    assert later.protocol_epoch == "v2"
+    earlier = replace(later, protocol_epoch="v1")
+    assert any(world.outcome(later, p) != world.outcome(earlier, p)
+               for p in world.PROCEDURES)
+    learned = OutcomeLearner()
+    for n in range(25):
+        cues = world.relational_cues(earlier.public(),
+                                    dependency=earlier.actual_dependency)
+        learned.learn_context_outcome(
+            cues, "isolate", world.outcome(earlier, "isolate"),
+            evidence_id=f"original-{n}")
+    original = dict(learned.context_counts)
+    for n in range(25):
+        cues = world.relational_cues(later.public(),
+                                    dependency=later.actual_dependency)
+        learned.learn_context_outcome(
+            cues, "isolate", world.outcome(later, "isolate"),
+            evidence_id=f"changed-{n}")
+    assert all(key in learned.context_counts for key in original)
+    assert any("epoch=v2" in cue for cue, _ in learned.context_counts)
+
+
+def test_refiner_preserves_thought_identity_across_observation_and_stop():
+    learned = OutcomeLearner()
+    refiner = ProgressiveRefiner(learned)
+    state = TransferState(episode_id="single-cognitive-thread")
+    resolve = Action("resolve", "isolate", "procedure")
+    other = Action("resolve", "purge", "procedure")
+    inspect = Action("inspect_dependency", "pump-1", "dependency")
+    scored = [(0.02, resolve, [], None), (0.01, other, [], None),
+              (0.0, inspect, [], None)]
+    context = {
+        "cognitive_mode": "contextual", "audits": {},
+        "attention_cues": frozenset({"pair:mode=warm|dependency=stable"}),
+        "verified_dependency": False, "consequence": 1.0,
+        "source_reliability": .5, "inspection_cost": .25,
+    }
+    first, trace = refiner.refine_contextual(state, scored, [], context=context)
+    assert first[0][1].kind == "inspect_dependency"
+    assert trace["decision_basis"] == "verify_uncertain_dependency"
+    context["verified_dependency"] = True
+    second, revision = refiner.refine_contextual(state, scored, [], context=context)
+    assert second[0][1].kind == "resolve"
+    assert revision["thought_id"] == trace["thought_id"]
+    assert revision["version"] > trace["version"]
 
 
 def test_bounded_retrieval_activates_same_live_selector_under_noise():
