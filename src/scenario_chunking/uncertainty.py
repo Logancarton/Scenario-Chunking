@@ -298,7 +298,7 @@ class UncertaintyRun(TransferRun):
             action=action)
         result = self._event(
             episode, len(state.attempted_actions), kind=EventKind.OUTCOME,
-            truth=TruthStatus.OUTCOME, outcome="failure",
+            truth=TruthStatus.OUTCOME, outcome="blocked",
             content=f"Instrument reports {missing} must finish first",
             tags={"goal:workshop_recovery", "outcome:blocked",
                   f"axis:{action.key_name}", f"prerequisite:{missing}"},
