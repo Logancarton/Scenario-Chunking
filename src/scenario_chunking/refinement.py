@@ -529,6 +529,60 @@ class ProgressiveRefiner:
             "activation_state": thread.status_at(state.current_time),
         }
 
+    def refine_incremental(self, state: CognitiveState, scored, hits, *,
+                           context: dict):
+        """Single evidence-grounded, cost-sensitive reconsideration.
+
+        The refiner cannot create evidence or select actions. It may revise the
+        ranking using already-computed predictions and explicitly priced risk.
+        """
+        if not scored:
+            raise ValueError("missing incremental candidates")
+        direct = sorted(scored, key=lambda row: (-row[0], row[1].label))
+        values = context["candidate_values"]
+        predictions = context["predictions"]
+        risk_price = max(0.0, float(context.get("risk_price", 0.0)))
+        assessed = {
+            a.label: values[a.label] - risk_price *
+            predictions[a.label]["uncertainty"] *
+            (1.0 - predictions[a.label]["probability"])
+            for _, a, _, _ in scored
+        }
+        best = min(scored, key=lambda row: (-assessed[row[1].label], row[1].label))
+        thread = self.thread(state)
+        self._focus(thread, state.current_time)
+        evidence = tuple(sorted(set(
+            eid for data in predictions.values() for eid in data["evidence_ids"])))
+        signature = (state.episode_id, best[1].label, evidence,
+                     tuple((key, round(value, 4)) for key, value in sorted(assessed.items())))
+        changed = not thread.versions or thread.versions[-1].signature != signature
+        if changed and len(thread.versions) < self.max_versions:
+            thread.versions.append(ThoughtVersion(
+                number=len(thread.versions) + 1,
+                preferred_action=best[1].label,
+                alternatives=tuple(row[1].label for row in direct if row[1] != best[1]),
+                evidence_ids=evidence,
+                memory_chunk_ids=tuple(hit.chunk_id for hit in hits),
+                contradictions=(),
+                uncertainty=predictions[best[1].label]["uncertainty"],
+                reason="conditional_evidence_and_decision_risk",
+                signature=signature, time=state.current_time,
+                predicted_outcomes=tuple(sorted(
+                    (key, v["probability"]) for key, v in predictions.items())),
+            ))
+        ordered = [(max(row[0] for row in scored) + 1, best[1],
+                    best[2] + ["incremental_value_refinement"], best[3])] + [
+                        row for row in direct if row[1].label != best[1].label]
+        return ordered, {
+            "thought_id": thread.thought_id,
+            "changed": changed, "version": len(thread.versions),
+            "reasoning_cycles": 2,
+            "meaningfully_changed_action": best[1] != direct[0][1],
+            "contributing_evidence_ids": list(evidence),
+            "additional_detailed_reads": 0,
+            "decision_basis": "evidence_risk_adjusted",
+        }
+
     def refine_temporal(self, state: CognitiveState, scored, hits, *, context: dict):
         """Reconsider a sourced expectation only after a relevant time/evidence change.
 
