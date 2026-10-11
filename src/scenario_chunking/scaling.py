@@ -189,6 +189,7 @@ class ScalingRun(UncertaintyRun):
         agent.memory.inject_distractors(
             extra - same_goal_noise, start_time=agent.clock + 1,
             goal_id="unrelated_goal")
+        memory_at_test_start = len(agent.memory.chunks)
         start_cost = dict(agent.cost)
         rounds = [agent._execute_round(i) for i in range(agent.rounds)]
         deltas = {key: value - start_cost.get(key, 0)
@@ -203,7 +204,8 @@ class ScalingRun(UncertaintyRun):
             "seed": self.seed, "treatment": self.treatment,
             "training_experiences": self.experiences if self.treatment != "untrained_structural" else 0,
             "stage": stage, "familiar": familiar,
-            "memory_target": memory_target, "stored_memories": len(agent.memory.chunks),
+            "memory_target": memory_target, "stored_memories": memory_at_test_start,
+            "stored_after_trials": len(agent.memory.chunks),
             "rounds": len(rounds), "completed_rounds": correct,
             "completion_rate": correct / len(rounds),
             "first_action_accuracy": statistics.mean(float(r["first_action_correct"])
