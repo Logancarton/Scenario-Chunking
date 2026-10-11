@@ -28,6 +28,21 @@ jobs:
           python - <<'PY'
           from scenario_chunking.incremental_experiment import write_incremental_benchmark
           p = write_incremental_benchmark(seeds=(7, 23, 61, 101, 149))
+          import json
+          from pathlib import Path
+          trace = json.loads(Path("results-e11/continuity_trace.json").read_text())
+          assert len(trace) == 10
+          assert len({row["concept_id"] for row in trace}) == 1
+          assert all(row["observed_outcome_id"] and
+                     row["changed_belief"]["credit_mass"] == 1.0 and
+                     row["next_decision"] for row in trace)
+          for row in trace:
+              print("E11_CONTINUITY_SEQUENCE", {
+                  key: row[key] for key in (
+                      "index", "prediction", "belief_id",
+                      "reused_belief_identity", "supporting_prior_evidence",
+                      "outcome", "belief_update", "changed_belief",
+                      "next_decision")})
           assert len(p["trials"]) == 5 * 3 * 32 * 5
           assert len(p["frozen_trials"]) == 5 * 3 * 8 * 5
           assert p["frozen_training_protocol"]["same_interventions_across_treatments"]
