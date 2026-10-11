@@ -18,6 +18,8 @@ def main() -> None:
     parser.add_argument("--refinement", action="store_true",
                         help="Run bounded progressive thought refinement ablations")
     parser.add_argument("--transfer", action="store_true", help="Run Experiment 6 category learning and stepwise transfer")
+    parser.add_argument("--uncertainty", action="store_true", help="Run Experiment 7 adaptive uncertainty challenge")
+    parser.add_argument("--action-budget", type=int, default=9, help="Maximum actions per Experiment 7 novel task")
     parser.add_argument("--rounds", type=int, default=4, help="Novel rounds in transfer benchmark")
     parser.add_argument("--meaning", action="store_true",
                         help="Run separate four-treatment learned meaning ablations")
