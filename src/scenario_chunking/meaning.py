@@ -70,6 +70,26 @@ class MeaningInterpreter:
         self.memory = memory
         self.learner = learner
 
+    @staticmethod
+    def contextual_literals(last_outcome: dict | None, now: float, *,
+                            gap_threshold: float = 30.0) -> frozenset[str]:
+        """E12: sequence and elapsed-time meaning as candidate explanatory evidence.
+
+        Interprets the continuing thought's own chronology (the previous executed
+        procedure and its outcome, and the elapsed time since). These literals
+        are only offered to the explanation learner; they matter only if its
+        evidence-scored rules adopt them. No axis receives a fixed importance.
+        Without a continuing investigation there is no sequence to interpret.
+        """
+        if not last_outcome or last_outcome.get("procedure") is None:
+            return frozenset({"pair:sequence:none"})
+        elapsed = now - float(last_outcome["time"])
+        if not math.isfinite(elapsed) or elapsed < 0:
+            raise ValueError("chronology cannot run backwards")
+        return frozenset({
+            f"pair:sequence:{last_outcome['procedure']}_{last_outcome['outcome']}",
+            "pair:gap:" + ("long" if elapsed > gap_threshold else "short")})
+
     def incremental_action_values(self, cues: frozenset[str], actions: list[Action],
                                   *, success_reward: float = 1.0,
                                   failure_loss: float = 1.0,

@@ -88,11 +88,14 @@ class IncrementalRun:
 
     def _event(self, state: CognitiveState, *, kind: EventKind, status: TruthStatus,
                content: str, tags: frozenset[str], action=None, outcome=None,
-               cause=None, reward: float = 0.0, metadata=None) -> Event:
+               cause=None, reward: float = 0.0, metadata=None,
+               occurred: float | None = None) -> Event:
+        # occurred: environment event time when it precedes acquisition (delayed feedback).
         event = Event(
             event_id=self.memory.next_event_id(), episode_id=state.episode_id,
             goal_id=state.goal_id, step=int(state.current_time),
-            occurrence_time=state.current_time, acquired_time=state.current_time,
+            occurrence_time=state.current_time if occurred is None else occurred,
+            acquired_time=state.current_time,
             storage_time=state.current_time, kind=kind, truth_status=status,
             content=content, semantic_tags=tags,
             action=action, outcome=outcome, cause_event_id=cause,

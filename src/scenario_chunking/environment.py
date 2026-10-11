@@ -700,18 +700,19 @@ class IncrementalDispatchWorld:
     so different learned choices never shift later scenarios' random stream.
     """
     def __init__(self, *, family: str, factors: dict[str, str], epoch: int,
-                 outcomes: dict[str, bool]) -> None:
-        if family not in ("delivery", "repair", "coordination"):
+                 outcomes: dict[str, bool], truth: dict[str, bool] | None = None,
+                 scripted: bool = False) -> None:
+        if not scripted and family not in ("delivery", "repair", "coordination"):
             raise ValueError("unknown dispatch family")
         self.family, self.factors, self.epoch = family, dict(factors), epoch
         self._outcomes = dict(outcomes)
+        # Noiseless rule; evaluation-only, never delivered to cognition.
+        self._truth = dict(truth if truth is not None else outcomes)
         self.executed = False
 
-    @classmethod
-    def scenario(cls, *, seed: int, family: str, index: int,
-                 factors: dict[str, str], epoch: int):
-        """The experiment's only private causal ground truth, including noise."""
-        import hashlib
+    @staticmethod
+    def causal_rule(family: str, factors: dict[str, str], epoch: int) -> dict[str, bool]:
+        """The experiment's private noiseless causal rule for the E11/E12 families."""
         p, d, u, c, n = (factors[k] for k in
                           ("person", "delay", "urgency", "capacity", "channel"))
         if family == "delivery":
@@ -731,15 +732,43 @@ class IncrementalDispatchWorld:
                 # A real but publicly signaled protocol change; historical
                 # evidence is retained yet should not override the new epoch.
                 express = c == "limited" and (u == "high" or n == "night")
-        truths = {"standard": standard, "express": express}
-        for procedure in truths:
-            digest = hashlib.sha256(
-                f"{seed}|{family}|{index}|{procedure}|noise".encode()
-            ).digest()
+        return {"standard": standard, "express": express}
+
+    @staticmethod
+    def _noisy(truths: dict[str, bool], key: str, noise: float) -> dict[str, bool]:
+        import hashlib
+        outcomes = dict(truths)
+        for procedure in outcomes:
+            digest = hashlib.sha256(f"{key}|{procedure}|noise".encode()).digest()
             draw = int.from_bytes(digest[:8], "big") / (2 ** 64)
-            if draw < .09:
-                truths[procedure] = not truths[procedure]
-        return cls(family=family, factors=factors, epoch=epoch, outcomes=truths)
+            if draw < noise:
+                outcomes[procedure] = not outcomes[procedure]
+        return outcomes
+
+    @classmethod
+    def scenario(cls, *, seed: int, family: str, index: int,
+                 factors: dict[str, str], epoch: int):
+        """The experiment's only private causal ground truth, including noise."""
+        if family not in ("delivery", "repair", "coordination"):
+            raise ValueError("unknown dispatch family")
+        truths = cls.causal_rule(family, factors, epoch)
+        return cls(family=family, factors=factors, epoch=epoch,
+                   outcomes=cls._noisy(truths, f"{seed}|{family}|{index}", .09), truth=truths)
+
+    @classmethod
+    def scripted(cls, *, seed: int, family: str, index: int, factors: dict[str, str],
+                 truths: dict[str, bool], noise: float = .08, epoch: int = 0):
+        """E12 controlled challenge world: truths come from the evaluation harness.
+
+        The public epoch stays constant; any rule change is never announced.
+        """
+        if set(truths) != {"standard", "express"}:
+            raise ValueError("scripted worlds define both procedures")
+        if not 0.0 <= noise < .5:
+            raise ValueError("noise must lie in [0, .5)")
+        return cls(family=family, factors=factors, epoch=epoch, scripted=True,
+                   outcomes=cls._noisy(truths, f"scripted|{seed}|{family}|{index}", noise),
+                   truth=truths)
 
     def public_cues(self) -> frozenset[str]:
         return frozenset(
@@ -764,6 +793,10 @@ class IncrementalDispatchWorld:
             confidence=1.0, informative=True,
             metadata={"procedure": action.target,
                       "context_cues": sorted(self.public_cues())})
+
+    def counterfactual_truth(self, procedure: str) -> bool:
+        """Offline evaluator only: the noiseless rule, never seen by cognition."""
+        return self._truth[procedure]
 
     def counterfactual_reward(self, procedure: str) -> float:
         """Offline evaluator only; never delivered to the cognitive pipeline."""
