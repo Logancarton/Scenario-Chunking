@@ -384,29 +384,29 @@ At 100 experience steps, adaptive learned focus averaged 32 evaluated headers/de
 
 ## Experiment 8 correction — held-out contextual causal scaling
 
-**Branch:** \`experiment/cognitive-scaling-e8-corrected\`. This entry supersedes the
+**Branch:** `experiment/cognitive-scaling-e8-corrected`. This entry supersedes the
 initial E8 architecture as a test of causal scaling; the earlier implementation
 record and negative result are retained for provenance.
 
-**Why corrected:** E8 initially treated \`self\`, \`salience\`, \`time\`,
-\`sequence\`, and \`person\` as five independent procedural symbol choices.
+**Why corrected:** E8 initially treated `self`, `salience`, `time`,
+`sequence`, and `person` as five independent procedural symbol choices.
 Its learned focus prioritized only two predetermined categories using
 prerequisite heuristics, and the hidden evaluation world changed with each
 checkpoint. It could neither cleanly measure experience effects nor demonstrate
 genuinely learned, compositional causal understanding.
 
-**New live research path:** \`ContextualWorld\` owns the private procedure
+**New live research path:** `ContextualWorld` owns the private procedure
 equation and instrument outcomes. Every problem has four plausible intervention
 choices and one joint scene carrying time/protocol, source, consequence,
-self-relevance, condition and dependencies. \`EpisodicMemory\` keeps immutable
-events; \`OutcomeLearner\` accumulates outcome-conditioned relationship
+self-relevance, condition and dependencies. `EpisodicMemory` keeps immutable
+events; `OutcomeLearner` accumulates outcome-conditioned relationship
 statistics and attribution/attention utility and retains source verification.
-\`MemoryRouter\` provides bounded indexed retrieval; \`MeaningInterpreter\`
+`MemoryRouter` provides bounded indexed retrieval; `MeaningInterpreter`
 combines provenance-bearing episodic evidence with revisable learned contextual
-relationships and appropriately weighted testimony. \`ProgressiveRefiner\`
+relationships and appropriately weighted testimony. `ProgressiveRefiner`
 preserves thought identity, revises evidence-backed preferences and can choose
-inspection or stop; \`ActionSelector\` remains the one action authority.
-\`scaling.py\` sequences owners but contains no duplicate selector.
+inspection or stop; `ActionSelector` remains the one action authority.
+`scaling.py` sequences owners but contains no duplicate selector.
 
 **Experiment validity:** Frozen held-out combinations cover all four possible
 procedure outcomes. Their sub-relations appear in training but the joint
