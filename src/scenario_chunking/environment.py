@@ -272,3 +272,41 @@ def default_episode_specs() -> list[EpisodeSpec]:
             clue_text="Luis explains that the ivory key is assigned to the portable toolbox.",
         ),
     ]
+
+
+# Research-only procedural transfer environment; no production runtime imports it.
+AXES = ("self", "salience", "time", "sequence", "person")
+SYMBOLS = (
+    "amber", "birch", "cobalt", "delta", "elm", "fennel", "garnet", "harbor",
+    "indigo", "jasper", "kelp", "lumen", "marble", "nectar", "opal", "piper",
+    "quill", "raven", "sable", "tulip", "umber", "violet", "willow", "zircon",
+)
+OBJECTS = ("compressor", "lifter", "conveyor", "generator", "sorter", "mixer")
+PEOPLE = ("Orin", "Sela", "Amin", "Jora", "Nemi", "Tavi", "Lora")
+
+
+class TransferWorld:
+    """Private procedural truth; no reference to this object from the policy."""
+
+    def __init__(self, seed: int) -> None:
+        rng = random.Random(seed * 101 + 29)
+        selected = rng.sample(SYMBOLS, 2 * len(AXES))
+        self.options = {axis: tuple(selected[2*i:2*i+2]) for i, axis in enumerate(AXES)}
+        self.correct = {axis: rng.choice(self.options[axis]) for axis in AXES}
+        self.original_time = next(x for x in self.options["time"] if x != self.correct["time"])
+
+    def accepted(self, axis: str, token: str, *, historical: bool = False) -> bool:
+        if axis not in AXES:
+            raise ValueError("unknown axis")
+        expected = self.original_time if historical and axis == "time" else self.correct[axis]
+        return token == expected
+
+    def scene(self, seed: int, round_no: int) -> dict:
+        rng = random.Random(seed * 1009 + round_no * 83)
+        return {
+            "object": rng.choice(OBJECTS) + "-" + str(seed + round_no),
+            "person": rng.choice(PEOPLE) + "-" + str(round_no),
+            "order": rng.sample(list(AXES), len(AXES)),
+        }
+
+
