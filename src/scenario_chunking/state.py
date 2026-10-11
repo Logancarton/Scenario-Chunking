@@ -183,6 +183,10 @@ class CognitiveState:
     def record_action(self, action: Action) -> None:
         self.attempted_actions.append(action.label)
 
+    def incremental_context(self, cues: frozenset[str], timestamp: float) -> None:
+        self.context_cues = cues
+        self.current_time = timestamp
+
     def candidate_actions(self) -> list[Action]:
         actions: list[Action] = []
         if self.storage_name not in self.inspected:
