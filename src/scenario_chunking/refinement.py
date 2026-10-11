@@ -330,6 +330,7 @@ class ProgressiveRefiner:
                 for record in decisions.values()
                 for cue in record.get("categories", {})
                 if cue.startswith(f"signal:{axis}:")
+                and record.get("categories", {}).get(cue, 0) > 0
             )
             if not applicable:
                 validity_unresolved.append(axis)
