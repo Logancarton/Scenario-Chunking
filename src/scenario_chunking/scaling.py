@@ -115,7 +115,8 @@ class ScalingRun(UncertaintyRun):
                     self.learner.learn_observation_value(
                         dependency != task.reported_dependency)
             cues = self.world.relational_cues(reported, dependency=dependency)
-            procedure = self.world.PROCEDURES[(index * 13 + self.seed) % 4]
+            procedure = self.world.PROCEDURES[
+                (index + index // len(self.world.TRAIN_KEYS) + self.seed) % 4]
             if self.treatment != "untrained_structural":
                 self.learner.begin_episode()
                 success, outcome_id = self._attempt(
