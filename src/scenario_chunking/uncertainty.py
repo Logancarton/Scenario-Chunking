@@ -558,7 +558,25 @@ def run_uncertainty_experiment(output_dir: str | Path, *,
     reflect = summary["extended_reflection"]
     onepass = summary["strong_one_pass"]
     no_reflect = summary["full_no_reflection"]
+    paired = [
+        reflect["by_seed"][i]["completion_rate"] -
+        onepass["by_seed"][i]["completion_rate"]
+        for i in range(len(seeds))
+    ]
+    rng = random.Random(7407)
+    bootstrap = sorted(
+        statistics.mean(paired[rng.randrange(len(paired))]
+                        for _ in paired)
+        for _ in range(2000)
+    )
+    lower, upper = bootstrap[49], bootstrap[1949]
+    extra = (reflect["mean_processing_evaluations"] -
+             onepass["mean_processing_evaluations"])
     verdict = {
+        "paired_seed_completion_deltas": paired,
+        "paired_bootstrap_95pct_interval": [lower, upper],
+        "gain_per_1000_extra_evaluations": (
+            1000 * statistics.mean(paired) / extra if extra > 0 else None),
         "gain_over_interpretation": reflect["completion_rate"] -
                                     no_reflect["completion_rate"],
         "gain_over_strong_one_pass": reflect["completion_rate"] -
@@ -567,7 +585,7 @@ def run_uncertainty_experiment(output_dir: str | Path, *,
         "extra_processing_vs_one_pass": reflect["mean_processing_evaluations"] -
                                          onepass["mean_processing_evaluations"],
         "reflection_has_verified_advantage": (
-            reflect["completion_rate"] > onepass["completion_rate"] and
+            lower > 0 and
             reflect["completion_rate"] > no_reflect["completion_rate"]),
     }
     payload = {
