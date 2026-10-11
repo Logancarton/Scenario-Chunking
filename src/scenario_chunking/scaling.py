@@ -411,6 +411,12 @@ class ScalingRun(TransferRun):
             "mean_retrieval_ms": avg("retrieval_ms"),
             "mean_selection_ms": avg("selection_ms"),
             "mean_processing_evaluations": avg("interpretation_evaluations"),
+            "processing_per_correct_task": (
+                sum(s["interpretation_evaluations"] for s in steps) /
+                sum(correct) if sum(correct) else None),
+            "detail_reads_per_correct_task": (
+                sum(s["detail_events"] for s in steps) /
+                sum(correct) if sum(correct) else None),
             "mean_thought_versions": statistics.mean(
                 o["thought_versions"] for o in outcomes),
             "round_successes": [bool(o["completed"]) for o in outcomes],
@@ -485,6 +491,16 @@ def run_scaling_experiment(
                     else None,
                 "mean_processing_evaluations": statistics.mean(
                     r["mean_processing_evaluations"] for r in matched),
+                "mean_processing_per_correct_task": statistics.mean(
+                    r["processing_per_correct_task"] for r in matched
+                    if r["processing_per_correct_task"] is not None)
+                    if any(r["processing_per_correct_task"] is not None for r in matched)
+                    else None,
+                "mean_detail_reads_per_correct_task": statistics.mean(
+                    r["detail_reads_per_correct_task"] for r in matched
+                    if r["detail_reads_per_correct_task"] is not None)
+                    if any(r["detail_reads_per_correct_task"] is not None for r in matched)
+                    else None,
                 "mean_memories": statistics.mean(r["stored_memories"] for r in matched),
                 "by_seed": [{"seed": r["seed"], "complexity": r["complexity"],
                              "distractors": r["memory_target"],
