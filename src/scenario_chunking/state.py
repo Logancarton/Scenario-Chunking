@@ -210,6 +210,11 @@ class CognitiveState:
         return actions
 
     def action_features(self, action: Action) -> frozenset[str]:
+        if self.goal_id == "response_dispatch":
+            return self.context_cues | frozenset({
+                "goal:response_dispatch", "action:" + action.kind,
+                "procedure:" + (action.target or action.kind),
+            })
         if self.goal_id == "temporal_decisions":
             signals = {"goal:temporal_decisions", f"action:{action.kind}"}
             if action.target:
