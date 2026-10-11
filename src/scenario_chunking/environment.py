@@ -476,6 +476,9 @@ class ContextualWorld:
         return frozenset({
             f"pair:mode={public['mode']}|dependency={dep}",
             f"pair:material={public['material']}|phase={public['phase']}",
+            f"pair:context={public['context']}|source={public['source']}",
+            f"pair:mode={public['mode']}|material={public['material']}",
+            f"pair:consequence={public['consequence']}|self={public['self_relevance']}",
             f"source:{public['source']}|context:{public['context']}",
             f"mode:{public['mode']}", f"dependency:{dep}",
             f"material:{public['material']}", f"phase:{public['phase']}",
