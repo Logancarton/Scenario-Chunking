@@ -66,7 +66,7 @@ class OutcomeLearner:
             raise ValueError("positive finite promised duration required")
         if not math.isfinite(elapsed) or elapsed < 0:
             raise ValueError("finite nonnegative elapsed required")
-        events = [(0.7, True), (1.5, True)]
+        events = [(0.7, True), (1.5, True), (math.inf, False)]
         for arrival, lower, promise in self.temporal_samples[context].values():
             if promise > 0:
                 events.append(((arrival if arrival is not None else lower) / promise,
