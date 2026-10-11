@@ -1,0 +1,47 @@
+name: Experiment 8 scaling smoke
+
+on:
+  push:
+    branches: ["experiment/cognitive-scaling-e8"]
+  workflow_dispatch:
+
+jobs:
+  scaling-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Focused Experiment 8 behavioral tests
+        run: python -m pytest -q tests/test_scaling.py
+      - name: Two-stage live E8 run
+        run: |
+          scenario-chunking --scaling --output results-scaling \
+            --seeds 7 --rounds 2 --training-stages 20,100 \
+            --memory-stages 100,500 --candidate-budget 32 \
+            --scaling-conditions untrained_structural,strong_one_pass,adaptive_focus,bounded_without_learned_focus
+      - name: Validate actual research output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path("results-scaling/scaling_summary.json").read_text())
+          r = json.loads(Path("results-scaling/scaling_trials.json").read_text())
+          assert p["experiment"] == 8 and len(r) == 8
+          assert all(0 <= t["completion_rate"] <= 1 for t in r)
+          assert all(t["mean_header_evaluations"] <= 32 for t in r if t["treatment"] in ("adaptive_focus", "bounded_without_learned_focus"))
+          print(json.dumps(p["stage_results"], indent=2))
+          PY
+      - name: Compilation and scoped diff check
+        run: |
+          python -m compileall -q src tests
+          git diff --check HEAD^ HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: experiment8-smoke-results
+          path: results-scaling/
+          if-no-files-found: ignore
