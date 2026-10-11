@@ -130,6 +130,14 @@ class ActionSelector:
             scored = [(max(x[0] for x in scored) + 1.0, best[1],
                        best[2] + ["one_pass_expected_value"], best[3])] + [
                            x for x in scored if x[1] != best[1]]
+        if (not refine and transfer_context
+                and transfer_context.get("cognitive_mode") == "incremental"):
+            # One-pass has identical evidence, generalized knowledge and values.
+            values = transfer_context["candidate_values"]
+            best = min(scored, key=lambda x: (-values[x[1].label], x[1].label))
+            scored = [(max(x[0] for x in scored) + 1.0, best[1],
+                       best[2] + ["one_pass_conditional_value"], best[3])] + [
+                           x for x in scored if x[1] != best[1]]
         scored.sort(key=lambda item: (-item[0], item[1].label))
         score, action, reasons, frame = scored[0]
         predicted_success = 1.0 / (1.0 + math.exp(-score))
