@@ -261,7 +261,8 @@ class UncertaintyRun(TransferRun):
             for dependent, before in observed.items():
                 if before:
                     state.current_prerequisites.setdefault(dependent, set()).add(before)
-            details = observed
+            details = {"source_status": "current_dependency_graph",
+                       "current_dependencies": observed}
             tags = {"goal:workshop_recovery", "axis:sequence",
                     "source:current_protocol"}
         else:
