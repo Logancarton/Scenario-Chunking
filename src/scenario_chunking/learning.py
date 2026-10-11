@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import math
 
 
 @dataclass
@@ -38,6 +39,12 @@ class OutcomeLearner:
         # never copied from the environment's private dependency graph.
         self.source_verifications: dict[tuple[str, str], list[bool]] = defaultdict(list)
         self.prerequisite_observations: dict[tuple[str, str], int] = defaultdict(int)
+        # Contextual outcomes are statistics of observed causal attempts, not a
+        # second memory store. Source events remain in EpisodicMemory.
+        self.context_counts: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
+        self.context_evidence_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
+        self.focus_value: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        self.inspect_value: list[float] = [1.0, 1.0]
 
     def verify_source(self, person: str, context: str, correct: bool) -> None:
         self.source_verifications[(person, context)].append(bool(correct))
@@ -58,6 +65,81 @@ class OutcomeLearner:
         return {before: self.prerequisite_strength(before, after)
                 for before, after in self.prerequisite_observations if after == dependent}
 
+
+    def contextual_probability(self, cue: str, procedure: str) -> tuple[float, float]:
+        """Bounded Beta posterior over actual observed action outcomes."""
+        yes, no = self.context_counts[(cue, procedure)]
+        return (yes + 1.0) / (yes + no + 2.0), yes + no
+
+    def contextual_support(self, cues: frozenset[str], procedure: str) -> dict:
+        """Generalize through independently learned relational conjunctions.
+
+        Both causal relation families contribute; surface identities are never
+        memorized as a required key. Nothing here depends on private world truth.
+        """
+        relations = sorted(cue for cue in cues if cue.startswith("pair:"))
+        scores, ids = [], []
+        for cue in relations:
+            probability, count = self.contextual_probability(cue, procedure)
+            if count:
+                # A confidence-bounded likelihood ratio; repetitions cannot
+                # make belief arbitrarily strong or irrevocable.
+                strength = min(1.0, count / 12.0)
+                scores.append(strength * math.log(
+                    max(.05, probability) / max(.05, 1 - probability)))
+                ids.extend(self.context_evidence_ids.get((cue, procedure), ()))
+        return {"score": sum(scores) / max(1, len(relations)),
+                "evidence_ids": sorted(set(ids)),
+                "covered_relations": len(scores),
+                "relation_count": len(relations)}
+
+    def learn_context_outcome(self, cues: frozenset[str], procedure: str,
+                              success: bool, *, evidence_id: str) -> None:
+        """Learn from an observed action, never a supplied correct answer."""
+        if not self.enabled:
+            return
+        for cue in sorted(c for c in cues if c.startswith("pair:")):
+            prior, sample_size = self.contextual_probability(cue, procedure)
+            key = (cue, procedure)
+            yes, no = self.context_counts[key]
+            # Maintain reversibility: old history is still immutable in memory,
+            # while effective current associations can adapt to new outcomes.
+            if yes + no > 120:
+                yes *= .97
+                no *= .97
+            self.context_counts[key] = [yes + float(success),
+                                        no + float(not success)]
+            ids = self.context_evidence_ids[key]
+            if evidence_id not in ids:
+                ids.append(evidence_id)
+                del ids[:-12]
+            # Causal feedback adjusts attention quality by predictive gain.
+            baseline_error = (0.5 - float(success)) ** 2
+            pair_error = (prior - float(success)) ** 2
+            value = baseline_error - pair_error
+            quality = self.focus_value[cue]
+            quality[0] = .96 * quality[0] + .04 * value
+            quality[1] += 1
+
+    def select_context_focus(self, cues: frozenset[str], *,
+                             learned: bool, budget: int = 2) -> frozenset[str]:
+        if budget < 1:
+            raise ValueError("focus budget must be positive")
+        relations = sorted(c for c in cues if c.startswith("pair:"))
+        if not learned or not any(self.focus_value[c][1] for c in relations):
+            return frozenset(relations[:budget])
+        priority = lambda c: (self.focus_value[c][0], self.focus_value[c][1], c)
+        return frozenset(sorted(relations, key=priority, reverse=True)[:budget])
+
+    def observation_value(self) -> float:
+        yes, no = self.inspect_value
+        return yes / (yes + no)
+
+    def learn_observation_value(self, useful: bool) -> None:
+        if self.enabled:
+            yes, no = self.inspect_value
+            self.inspect_value = [yes * .98 + float(useful),
+                                  no * .98 + float(not useful)]
 
     def focus_axes(self, remaining: tuple[str, ...], completed: set[str], *,
                    invalidated: set[str] | None = None, limit: int = 2) -> tuple[str, ...]:
