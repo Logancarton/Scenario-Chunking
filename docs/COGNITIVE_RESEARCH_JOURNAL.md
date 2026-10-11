@@ -444,3 +444,59 @@ model full counterfactual testimony. The research still needs 30 independent
 seeds, more diverse held-out causal transformations, strict information/compute
 matching, longer-term interference controls and a complete 10k/20k run before
 any superiority or mature learning curve can be asserted.
+
+### Experiment 8 corrective replication — 30 independent seeds
+
+**Why this gate matters:** An earlier 30-seed replication of the initial
+corrected mechanism showed deterioration with experience: at 500 experiences,
+untrained completed 35% of tasks, strong one-pass 27%, and learned focus 18%.
+Reflection provided exactly zero goal-completion benefit. This negative result
+is retained; its cause prompted corrections rather than weakening the baseline.
+
+**Mechanism repair:** OutcomeLearner now evaluates each learned contextual
+relationship against the action's empirical base success rate, avoiding
+"learning" from common failures alone. MeaningInterpreter marginalizes
+uncertain source testimony across both publicly possible dependency values.
+ProgressiveRefiner uses verified source reliability, counterfactual hypothesis
+disagreement, consequence and an observed information-value estimate to
+investigate selectively. Same-task random exploration is aligned across
+treatments and frozen across stages. An identical-learned-focus one-pass
+control isolates attention from reflection.
+
+**30-seed corrected research run:** [GitHub Actions run
+38104001062](https://github.com/Logancarton/Scenario-Chunking/actions/runs/38104001062).
+Thirty independent seeds, four balanced held-out actions per seed, 100
+additional distractor memories, fixed complexity 2, checkpoints at 20, 100
+and 500 experiences. The same held-out task bank and action budget apply
+to all conditions at each checkpoint.
+
+| Training experiences | Untrained | Strong one-pass | Learned focus one-pass | Learned focus + reflection |
+| --- | ---: | ---: | ---: | ---: |
+| 20 | 41% | 52% | 34% | 34% |
+| 100 | 41% | 9% | 48% | 44% |
+| 500 | 41% | 26% | 56% | 54% |
+
+Seed-bootstrap 95% intervals for adaptive focus+reflection minus strong
+one-pass: 20 experiences **−17.5 percentage points**
+[−25.8, −8.3]; 100 experiences **+35.0 points**
+[+24.2, +45.0]; 500 experiences **+28.3 points**
+[+22.5, +34.2]. Thus focus is worse early and better after more
+observed experience **in this fixed synthetic task family**.
+
+The *same focus and initial retrieval evidence* without reflection finishes
+56% versus 54% with reflection at 500 experiences. The paired reflection
+increment is −1.7 points, 95% interval [−4.2, 0]. No positive reflection
+benefit is demonstrated. This is a meaningful **negative** finding about
+the current reflection policy, not grounds to count extra thought as cognition.
+
+**Interpretation:** One causal learning and attention mechanism now exhibits
+a measurable, experience-dependent advantage against the tested strong
+one-pass policy at later checkpoints. However that comparator evaluates a
+broader cue set, not strictly the same computational operations; the
+focus-matched one-pass ablation better isolates reflection. The sampled
+tasks still share a small underlying procedural grammar. Selection and
+calibration improvements must not be extrapolated to human-style open-world
+reasoning or to untested 2,000/10,000 experience stages. Per-task compute,
+distractor interactions and causal memory recall are reported by the
+corrected research harness; further factorial and domain-transfer
+replication remains necessary.
