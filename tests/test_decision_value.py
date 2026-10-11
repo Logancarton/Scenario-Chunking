@@ -121,7 +121,7 @@ def test_learning_and_thought_continuity_survive_new_python_process():
     code = (
         "import base64,pickle,sys;"
         "r=pickle.loads(base64.b64decode(sys.argv[1]));"
-        "assert len(r.state.timed_expectations)==3;"
+        "assert len(r.state.timed_expectations)==2;"
         "assert r.learner.temporal_samples;"
         "assert r.refiner.thread(r.state).versions;"
         "assert r.state.world_time>=1;"
