@@ -94,9 +94,14 @@ class ActionSelector:
             if self.refiner is None:
                 raise ValueError('no thought refiner configured')
             if transfer_scores is not None:
-                scored, thought_trace = self.refiner.refine_transfer(
-                    state, scored, hits, context=transfer_context or {},
-                )
+                if (transfer_context or {}).get("cognitive_mode") == "contextual":
+                    scored, thought_trace = self.refiner.refine_contextual(
+                        state, scored, hits, context=transfer_context or {},
+                    )
+                else:
+                    scored, thought_trace = self.refiner.refine_transfer(
+                        state, scored, hits, context=transfer_context or {},
+                    )
             else:
                 scored, thought_trace = self.refiner.refine(
                     state, scored, hits, prepared=prepared,
