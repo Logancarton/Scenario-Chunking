@@ -32,6 +32,15 @@ def test_context_is_joint_and_heldout_outcomes_balanced():
         assert any("material=" in cue and "phase=" in cue for cue in cues)
 
 
+def test_direct_experiment8_run_uses_contextual_environment_not_legacy_runner():
+    agent = ScalingRun(13, "learned_focus_one_pass", rounds=2, candidate_budget=24)
+    result = agent.run(experiences=20, memory_target=10, complexity=2)
+    assert result["training_experiences"] == 20
+    assert result["rounds"] == 2
+    assert all(task["task_id"].startswith("transfer-") for task in result["tasks"])
+    assert all(len(task["traces"]) <= agent.action_budget for task in result["tasks"])
+
+
 def test_cumulative_experiences_are_observed_and_preserve_previous_evidence():
     a = ScalingRun(7, "trained_association", rounds=2)
     b = ScalingRun(7, "adaptive_focus", rounds=2)
