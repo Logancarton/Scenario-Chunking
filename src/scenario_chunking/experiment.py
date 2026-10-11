@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import copy
 import json
 from pathlib import Path
@@ -30,6 +30,7 @@ from .policy import ActionSelector
 from .refinement import ProgressiveRefiner
 from .retrieval import IndexedCueReinstater, MemoryRouter, retrieval_recall_at_k
 from .state import CognitiveState
+from .working_memory import WorkingMemoryActivation
 
 
 class ExperimentRun:
@@ -44,7 +45,11 @@ class ExperimentRun:
         self.memory = EpisodicMemory()
         self.learner = OutcomeLearner(enabled=learning_enabled, strict_credit=bool(refinement_mode))
         self.environment = LockedWorkshop(seed)
-        self.router = MemoryRouter(self.memory, mode, top_k=top_k)
+        self.working_memory = (WorkingMemoryActivation(capacity=6, focused_capacity=2)
+                               if mode == RetrievalMode.ACTIVATION else None)
+        self.router = MemoryRouter(
+            self.memory, mode, top_k=top_k, working_memory=self.working_memory,
+            activation_persistence=self.learner.activation_persistence)
         self.refiner = (ProgressiveRefiner(self.learner, learning=refinement_mode == 'learned')
                         if refinement_mode else None)
         self.reinstater = (IndexedCueReinstater(self.memory)
@@ -165,6 +170,9 @@ class ExperimentRun:
 
         for step in range(1, max_actions + 1):
             query = state.retrieval_query()
+            if self.working_memory is not None:
+                # Only the experimental path fixes the global/episode clock mismatch.
+                query = replace(query, current_time=self.clock)
             hits, stats = self.router.retrieve(query)
             if self.reinstater is not None:
                 hits += self.reinstater.expand(
@@ -222,6 +230,16 @@ class ExperimentRun:
             spread_changed_action = bool(original_decision and original_decision.action != decision.action)
             spread_changed_score = bool(original_decision and abs(original_decision.score - decision.score) > 1e-9)
             action = decision.action
+            working_lifecycle_latency_ms = 0.0
+            lifecycle_started = perf_counter()
+            if self.working_memory is not None and decision.used_chunk_ids:
+                self.working_memory.use(
+                    decision.used_chunk_ids, state.goal_id, self.clock,
+                    known_headers={cid: self.memory.chunks[cid].semantic_tags
+                                   for cid in decision.used_chunk_ids},
+                    persistence=self.learner.activation_persistence)
+            if self.working_memory is not None:
+                working_lifecycle_latency_ms += (perf_counter() - lifecycle_started) * 1000.0
             before_features = state.action_features(action)
             repeated_now = action_counts.get(action.label, 0) > 0
             repeated += int(repeated_now)
@@ -298,8 +316,28 @@ class ExperimentRun:
                         self.memory.link_causal(previous_id, chunk.chunk_id, evidence="observed", confidence=0.90)
             if action_succeeded and action.key_name:
                 self.success_chunks.append((chunk.chunk_id, action.key_name))
+            working_snapshot = None
+            lifecycle_started = perf_counter()
+            if self.working_memory is not None:
+                if action_informative or action_succeeded:
+                    self.working_memory.use(
+                        [chunk.chunk_id], state.goal_id, self.clock,
+                        known_headers={chunk.chunk_id: chunk.semantic_tags},
+                        persistence=self.learner.activation_persistence)
+                self.learner.learn_activation_persistence(
+                    decision.used_chunk_ids,
+                    beneficial=action_succeeded or action_informative,
+                    observed=action_succeeded or action_failed or action_informative)
+                working_snapshot = self.working_memory.snapshot(
+                    state.goal_id, self.clock,
+                    persistence=self.learner.activation_persistence)
+                working_lifecycle_latency_ms += (perf_counter() - lifecycle_started) * 1000.0
 
             trace.append({
+                "working_lifecycle_latency_ms": working_lifecycle_latency_ms,
+                "working_memory": working_snapshot,
+                "used_memory_sources": list(decision.used_chunk_ids),
+                "activation_persistence_updates": len(self.learner.activation_updates),
                 "step": step,
                 "time": state.current_time,
                 "action": action.label,
@@ -669,7 +707,7 @@ def run_experiments(
     output_dir: str | Path,
     *,
     seeds: tuple[int, ...] = (7, 23, 61, 101, 149),
-    modes: tuple[RetrievalMode, ...] = tuple(RetrievalMode),
+    modes: tuple[RetrievalMode, ...] = (RetrievalMode.FULL, RetrievalMode.CHUNKED, RetrievalMode.RECENCY, RetrievalMode.STRUCTURAL, RetrievalMode.SPREADING),
     distractor_count: int = 1000,
     include_meaning: bool = False,
     include_refinement: bool = False,
@@ -695,6 +733,14 @@ def run_experiments(
             raw["try_key_brier"] = _try_key_brier(raw)
             raw["peak_memory_bytes"] = peak
             raw["learned_weights"] = run.learner.snapshot()
+            raw["activation_trajectory"] = (
+                run.working_memory.trajectories if run.working_memory else [])
+            raw["activation_reinstatements"] = (
+                run.working_memory.reinstatements if run.working_memory else 0)
+            raw["activation_mean_active"] = (
+                statistics.mean(t["active_count"] for t in run.working_memory.trajectories)
+                if run.working_memory and run.working_memory.trajectories else 0.0)
+            raw["activation_learning_updates"] = len(run.learner.activation_updates)
             raw["preference_snapshots"] = run.preference_snapshots
             raw["sparse_miss_cases"] = run.sparse_miss_cases()
             raw["recall_diagnostics"] = run.recall_diagnostics
@@ -907,6 +953,15 @@ def _aggregate(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "unnecessary_memory_activations_mean": statistics.mean(sum(ep["retrieval_stats"]["unnecessary_activations"] for ep in run["episodes"]) for run in group),
             "retrieval_latency_ms_mean": statistics.mean(sum(ep["retrieval_stats"]["latency_ms"] for ep in run["episodes"]) for run in group),
             "peak_memory_bytes_mean": statistics.mean(run["peak_memory_bytes"] for run in group),
+            "activation_mean_active": statistics.mean(
+                run.get("activation_mean_active", 0.0) for run in group),
+            "activation_reinstatements_mean": statistics.mean(
+                run.get("activation_reinstatements", 0) for run in group),
+            "activation_learning_updates_mean": statistics.mean(
+                run.get("activation_learning_updates", 0) for run in group),
+            "working_lifecycle_latency_ms_mean": statistics.mean(
+                sum(step.get("working_lifecycle_latency_ms", 0) for ep in run["episodes"]
+                    for step in ep["trace"]) for run in group),
             "goal_completions": sum(1 for ep in all_eps if ep["success"]),
             "goal_attempts": len(all_eps),
             "selection_latency_ms_mean": statistics.mean(

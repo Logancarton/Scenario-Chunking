@@ -886,3 +886,23 @@ Mechanism-level results on the challenges:
 * CI reproduces the seed-1301 unified reference in `docs/e12_unified_reference.json` to 9 decimals on Linux.
 
 Research runner only; the Sonara production repositories were read, not modified.
+
+## Working-memory activation — experimental candidate, unverified integration
+
+*Written 2026-10-10 against the Experiment 3 code base; it was left uncommitted and merged onto the post-E12 `main` on 2026-10-11. Its hypothesis has not been tested since.*
+
+This optional `activation` treatment preserves the original experiments and
+five-axis meaning modes. Episodic event times and evidence remain unmodified.
+Its bounded current-thought owner decays accessibility lazily using a global
+clock, exposes focused/peripheral/dormant states, and competes for six active
+bundle slots (two focused). Only evidence used by the actual chosen action
+receives maintenance; specific matching cues can reinstate dormant chunks.
+The existing outcome learner adapts persistence after actual observed feedback.
+Activation is never a probability of truth, source confidence, or memory validity.
+
+**Hypothesis, not demonstrated benefit:** Such selective maintenance might
+improve goal completion/action efficiency relative to the structural fixed-decay
+control at the same sparse top-K and distractor budget. Run the identical-seed
+six-scenario benchmark plus adversarial controls; publish measured detailed
+memory operations, latency, active counts, reactivations, action choices and
+negative results. Do not promote to Sonara without live behavioral evidence.

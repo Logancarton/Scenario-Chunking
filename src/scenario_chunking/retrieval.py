@@ -6,6 +6,7 @@ from time import perf_counter
 from .memory import EpisodicMemory
 from .models import EventKind, TruthStatus, RetrievalHit, RetrievalMode, RetrievalQuery, RetrievalStats
 from .spreading import BoundedNeighborActivator, SpreadBudget
+from .working_memory import WorkingMemoryActivation
 
 
 class MemoryRouter:
@@ -15,6 +16,8 @@ class MemoryRouter:
         self, memory: EpisodicMemory, mode: RetrievalMode, *,
         top_k: int = 6, spread_budget: SpreadBudget | None = None,
         candidate_budget: int | None = None,
+        working_memory: WorkingMemoryActivation | None = None,
+        activation_persistence: dict[str, float] | None = None,
     ) -> None:
         self.memory = memory
         self.mode = mode
@@ -22,6 +25,10 @@ class MemoryRouter:
         if candidate_budget is not None and candidate_budget < top_k:
             raise ValueError("candidate budget cannot be smaller than top_k")
         self.candidate_budget = candidate_budget
+        self.working_memory = working_memory
+        self.activation_persistence = activation_persistence if activation_persistence is not None else {}
+        if mode == RetrievalMode.ACTIVATION and working_memory is None:
+            raise ValueError("activation mode requires a working-memory owner")
         self.spreader = BoundedNeighborActivator(memory, spread_budget) if mode == RetrievalMode.SPREADING else None
 
     def retrieve(self, query: RetrievalQuery, *, anchor_event_ids: tuple[str, ...] = ()) -> tuple[list[RetrievalHit], RetrievalStats]:
@@ -65,7 +72,8 @@ class MemoryRouter:
             chunk_non_goal = {tag for tag in self.memory.chunks[hit.chunk_id].semantic_tags if not tag.startswith("goal:")}
             if query_non_goal and not (query_non_goal & chunk_non_goal):
                 stats.unnecessary_activations += 1
-            self.memory.activate(hit.chunk_id, query.current_time)
+            if self.mode != RetrievalMode.ACTIVATION:
+                self.memory.activate(hit.chunk_id, query.current_time)
         if self.mode == RetrievalMode.FULL:
             # Full retrieval pays the detail-processing bill for the whole historical collection,
             # even though only top-k results are exposed to the policy.
@@ -84,6 +92,16 @@ class MemoryRouter:
                 rank_header=lambda cid, q: self._score_chunk(chunk_id=cid, query=q),
             )
             hits = hits + extra
+        if self.mode == RetrievalMode.ACTIVATION and self.working_memory is not None:
+            # Cue reinstatement is not meaningful-use refresh.
+            for hit in hits:
+                chunk = self.memory.chunks[hit.chunk_id]
+                self.working_memory.cue(
+                    hit.chunk_id, chunk.header.goal_id, chunk.semantic_tags,
+                    query.semantic_tags, query.current_time,
+                    contradicted_keys=query.contradicted_keys,
+                    persistence=self.activation_persistence,
+                )
         stats.latency_ms = (perf_counter() - started) * 1000.0
         return hits, stats
 
@@ -154,7 +172,7 @@ class MemoryRouter:
             score = 0.45 * score + 0.55 * recency
             reasons.append(f"fixed_recency={recency:.3f}")
 
-        if self.mode in (RetrievalMode.STRUCTURAL, RetrievalMode.SPREADING):
+        if self.mode in (RetrievalMode.STRUCTURAL, RetrievalMode.SPREADING, RetrievalMode.ACTIVATION):
             # Time remains factual structure. We use it to identify contradictions and sequence
             # relationships, not to assume that newer is universally more useful.
             contradiction_penalty = 0.0
@@ -170,8 +188,13 @@ class MemoryRouter:
                 prev = self.memory.chunks[header.previous_chunk_id]
                 if "clue:key_relation" in prev.semantic_tags:
                     sequence_bonus += 0.12
-            activation = header.activation_at(query.current_time)
-            activation_bonus = min(0.12, 0.04 * activation)
+            if self.mode == RetrievalMode.ACTIVATION:
+                activation_bonus = self.working_memory.bonus(
+                    chunk_id, query.goal_id, query.current_time,
+                    persistence=self.activation_persistence)
+            else:
+                activation = header.activation_at(query.current_time)
+                activation_bonus = min(0.12, 0.04 * activation)
             score += sequence_bonus + activation_bonus - contradiction_penalty
             reasons.extend([
                 f"sequence={sequence_bonus:.3f}",
