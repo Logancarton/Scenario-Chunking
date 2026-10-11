@@ -509,6 +509,7 @@ class TransferRun:
             action_count += 1
             inspections += 1
             record["inspection_observation_ids"] = [report.event_id]
+            record["step"] = "inspect_protocol"
             record["outcome"] = "information_observed"
             self.traces.append(record)
             decision, record = self._decision(
