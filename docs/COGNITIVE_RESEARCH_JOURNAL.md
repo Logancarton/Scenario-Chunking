@@ -524,3 +524,44 @@ Actions. Full historical regression and Research Gates 6/7 remain the
 separate cumulative gate. The configured 2,000/10,000-experience and
 20,000-distractor stages are implemented but have not been executed as
 a verified large-scale study.
+
+
+## Experiment 9 — event-driven temporal memory and prediction (implementation record)
+
+**Source:** Branch `experiment/temporal-prediction-e9`, based on the corrected
+Experiment 8 research branch. This remains independent of Sonara production.
+
+**Mechanism:** Time is no longer just a recency feature or a protocol label.
+`CognitiveState` maintains a monotonic elapsed-world clock independent of
+cognitive processing ticks, retains sourced `TimedExpectation` records, and
+uses a bounded due-event queue to wake relevant expectations. Deadline
+passage produces `due_unverified`, not a fabricated absence or failure.
+The environment alone owns private arrival times and direct sensor feedback.
+EpisodicMemory stores the immutable source promise, prediction and
+subsequent observations. The existing ActionSelector invokes the existing
+ProgressiveRefiner when a due-event or verified observation justifies revision;
+refinement may choose information acquisition based on learned punctuality,
+consequence, and inspection cost. New versions cannot be created by repeated
+reasoning on unchanged evidence. Only OutcomeLearner learns duration error and
+on-time calibration, using direct event-timestamp evidence; a witnessed
+presence without an arrival timestamp never becomes an exact duration label.
+
+**Experimental constraints:** This is a simple, falsifiable "return in ten
+minutes" research environment. Controls use the same synthetic test worlds and
+retrieval/action pathway: clock-only, memory-only, learned-information one-pass,
+and temporal refinement. Two prior verified observations supply equal
+calibration to the learned treatments. Test cases include early arrival, late
+arrival, verified nonarrival, an unavailable sensor and an unverified
+arrival timestamp, plus misleading bystander testimony. Focused tests cover
+no-input waking, bounded selective retrieval, clock regression, duplicate
+evidence, stable thought termination, outcome updates and independent-process
+serialization.
+
+**Scientific status:** Built and wired into the research path, with CI
+verification pending at implementation time. Neither "due" nor a new thought
+version proves improved reasoning. The current synthetic cases cannot test
+complex social semantics, repeated appointments, causal time inference, or
+biological subjective experience. Keep all previous negative Experiment 8
+reflection findings intact and **do not promote Experiment 9** until live
+tests pass and a held-out, information/compute-matched comparison demonstrates
+benefits over strong simpler policies.

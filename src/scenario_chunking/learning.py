@@ -50,6 +50,51 @@ class OutcomeLearner:
         self.context_evidence_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
         self.focus_value: dict[str, list[float]] = defaultdict(_two_zero_counts)
         self.inspect_value: list[float] = [1.0, 1.0]
+        # Temporal prediction-error learning belongs to this existing learner.
+        # These are aggregate outcome parameters, never replacement event facts.
+        self.temporal_punctuality: dict[str, list[float]] = defaultdict(_two_zero_counts)
+        self.temporal_delay: dict[str, list[float]] = defaultdict(_two_zero_counts)
+        self.temporal_assessed: set[str] = set()
+        self.temporal_arrivals: set[str] = set()
+
+    def temporal_prediction(self, context: str, promised_duration: float) -> tuple[float, float]:
+        """Return estimated actual duration and on-time probability.
+
+        Unobserved overdue expectations supply no negative labels.
+        """
+        if promised_duration <= 0 or not math.isfinite(promised_duration):
+            raise ValueError("promised duration must be finite and positive")
+        count, total_delta = self.temporal_delay[context]
+        estimated = max(0.0, promised_duration + (total_delta / count if count else 0.0))
+        on_time, late = self.temporal_punctuality[context]
+        return estimated, (1.0 + on_time) / (2.0 + on_time + late)
+
+    def learn_temporal_observation(self, expectation, *, observed_at: float,
+                                   returned: bool, arrival_at: float | None = None) -> None:
+        """Learn punctuality once from direct evidence; learn delay on arrival.
+
+        An initial witnessed absence can be followed by a witnessed late
+        arrival without treating these as two independent punctuality trials.
+        """
+        if not self.enabled:
+            return
+        context = expectation.context
+        identity = expectation.expectation_id
+        if identity not in self.temporal_assessed and (
+                (returned and arrival_at is not None)
+                or (not returned and observed_at >= expectation.due_at)):
+            if returned and arrival_at is not None and arrival_at <= expectation.due_at:
+                self.temporal_punctuality[context][0] += 1.0
+            else:
+                self.temporal_punctuality[context][1] += 1.0
+            self.temporal_assessed.add(identity)
+        if returned and arrival_at is not None and identity not in self.temporal_arrivals:
+            promised = expectation.due_at - expectation.started_at
+            actual = arrival_at - expectation.started_at
+            self.temporal_delay[context][0] += 1.0
+            self.temporal_delay[context][1] += actual - promised
+            self.temporal_arrivals.add(identity)
+
 
     def verify_source(self, person: str, context: str, correct: bool) -> None:
         self.source_verifications[(person, context)].append(bool(correct))

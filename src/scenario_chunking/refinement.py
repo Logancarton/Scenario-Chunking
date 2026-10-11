@@ -529,6 +529,91 @@ class ProgressiveRefiner:
             "activation_state": thread.status_at(state.current_time),
         }
 
+    def refine_temporal(self, state: CognitiveState, scored, hits, *, context: dict):
+        """Reconsider a sourced expectation only after a relevant time/evidence change.
+
+        Clock passage marks an expectation due, never false. A verification
+        action is weighed against its observed prediction risk and inspection
+        cost. ActionSelector remains the sole authority to select the action.
+        """
+        if not scored:
+            raise ValueError("temporal refinement requires candidate actions")
+        expectation = state.timed_expectations[context["expectation_id"]]
+        thread = self.thread(state)
+        self._focus(thread, state.world_time)
+        direct = sorted(scored, key=lambda row: (-row[0], row[1].label))
+        promised = expectation.due_at - expectation.started_at
+        expected_duration, punctuality = self.learner.temporal_prediction(
+            expectation.context, promised)
+        lateness = max(0.0, state.world_time - expectation.due_at)
+        consequence = max(0.0, float(context.get("consequence", 1.0)))
+        inspection_cost = max(0.0, float(context.get("inspection_cost", .25)))
+        information_value = (1.0 - punctuality) * consequence * (
+            1.0 + min(1.0, lateness / max(1.0, promised))) * expectation.confidence
+        choices = {
+            "pending": "wait",
+            "due_unverified": ("check_return" if information_value > inspection_cost else "wait"),
+            "verified_absent": "follow_up",
+            "fulfilled": "acknowledge_return",
+        }
+        desired_kind = choices[expectation.status]
+        selected = next((row for row in scored if row[1].kind == desired_kind), None)
+        if selected is None:
+            raise ValueError("temporal action affordance missing: " + desired_kind)
+        evidence_ids = tuple([expectation.source_event_id] + expectation.observation_ids)
+        signature = (
+            expectation.expectation_id, expectation.status, evidence_ids,
+            desired_kind, round(information_value, 4) > inspection_cost,
+        )
+        before = len(thread.versions)
+        if (not thread.versions or thread.versions[-1].signature != signature) and (
+                len(thread.versions) < self.max_versions):
+            reason = {
+                "pending": "prediction_pending",
+                "due_unverified": "due_without_confirmed_outcome",
+                "verified_absent": "directly_observed_delay",
+                "fulfilled": "directly_observed_return",
+            }[expectation.status]
+            thread.versions.append(ThoughtVersion(
+                number=len(thread.versions) + 1,
+                preferred_action=selected[1].label,
+                alternatives=tuple(row[1].label for row in direct
+                                   if row[1].label != selected[1].label)[:3],
+                evidence_ids=evidence_ids,
+                memory_chunk_ids=tuple(sorted(hit.chunk_id for hit in hits)),
+                contradictions=(expectation.expectation_id,)
+                               if expectation.status == "verified_absent" else (),
+                uncertainty=1.0 - punctuality,
+                reason=reason, signature=signature,
+                time=state.world_time,
+                predicted_outcomes=(("on_time", punctuality),),
+            ))
+        reordered = [(
+            max(row[0] for row in scored) + 1.0,
+            selected[1], selected[2] + ["temporal=" + expectation.status],
+            selected[3],
+        )] + [row for row in direct if row[1] != selected[1]]
+        return reordered, {
+            "thought_id": thread.thought_id,
+            "version": thread.versions[-1].number,
+            "changed": len(thread.versions) != before,
+            "reasoning_cycles": 2 if expectation.status != "pending" else 1,
+            "decision_basis": thread.versions[-1].reason,
+            "activation_state": thread.status_at(state.world_time),
+            "expectation_id": expectation.expectation_id,
+            "expectation_status": expectation.status,
+            "source_event_id": expectation.source_event_id,
+            "contributing_evidence_ids": list(evidence_ids),
+            "retrieved_chunk_ids": [hit.chunk_id for hit in hits],
+            "predicted_on_time": punctuality,
+            "learned_expected_duration": expected_duration,
+            "expected_information_value": information_value,
+            "inspection_cost": inspection_cost,
+            "reasoning_stopped": len(thread.versions) == before,
+            "meaningfully_changed_action": selected[1] != direct[0][1],
+            "additional_detailed_reads": 0,
+        }
+
     def feedback(self, state: CognitiveState, decision, *, outcome: str | None,
                  outcome_event_ids: tuple[str, ...]) -> None:
         if not decision.thought_trace:

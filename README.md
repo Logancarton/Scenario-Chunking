@@ -343,3 +343,43 @@ the CLI but has **not yet been verified** and may require splitting memory
 conditions into separate controlled jobs. The smoke does not establish a
 reliable cognitive advantage, strictly equal computational budgets, or
 general reasoning beyond the synthetic causal world. See the research journal.
+
+
+## Experiment 9 — time-triggered temporal prediction (isolated research)
+
+Research branch: `experiment/temporal-prediction-e9`. This experiment tests a
+**functional** sense of elapsed time, not subjective time or consciousness. It
+builds directly on the corrected Experiment 8 branch; Sonara production is
+unchanged.
+
+`CognitiveState` now separates externally advanced, monotonic `world_time`
+from processing/episode ticks. A heap of sourced expectations wakes only those
+whose deadlines are due. "Due but unverified" is a provisional belief, **not**
+an observed failure. Direct observations may establish witnessed absence or
+return; a sensor may be unavailable or know presence without knowing the
+precise arrival time. Only authenticated-by-the-test-environment, timestamped
+feedback changes the existing `OutcomeLearner`'s estimated durations.
+Historical source/prediction/observation events remain in `EpisodicMemory`.
+
+The existing `ProgressiveRefiner` updates thought versions only when the
+evidence/status changes and considers inspection cost. The single
+`ActionSelector` still selects `wait`, `check_return`, `follow_up` or
+`acknowledge_return`. `temporal_experiment.py` is orchestration and
+measurement, not a parallel cognitive owner or runtime.
+
+Run focused tests and the small paired benchmark:
+
+```bash
+python -m pytest -q tests/test_temporal.py
+python - <<'PY'
+from scenario_chunking.temporal_experiment import write_temporal_benchmark
+print(write_temporal_benchmark()["summary"])
+PY
+```
+
+Controls include memory-only, clock-only, learned-information one-pass and
+temporal refinement. All share available actions and the synthetic world's
+private outcomes. Positive results require improved **observed decisions**,
+not merely a due-event log or more thought versions. This finite set of timed
+return cases does not establish cross-domain time understanding or superior
+refinement over the matched one-pass control.

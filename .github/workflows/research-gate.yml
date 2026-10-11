@@ -2,12 +2,34 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "main"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "experiment/cognitive-scaling-e8-corrected"]
   workflow_dispatch:
 
 jobs:
+  temporal-focused-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Experiment 9 focused behavioral tests
+        run: python -m pytest -q tests/test_temporal.py
+      - name: Experiment 9 paired research smoke
+        run: |
+          python - <<'PY'
+          from scenario_chunking.temporal_experiment import write_temporal_benchmark
+          result = write_temporal_benchmark()
+          assert len(result["trials"]) == 100
+          assert not any(row["false_failure_claim"] for row in result["trials"])
+          print(result["summary"])
+          PY
+      - name: Compile temporal owners and tests
+        run: python -m compileall -q src tests
   research-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -221,6 +243,21 @@ jobs:
           assert all(r["mean_header_evaluations"] <= 32 for r in trials if r["treatment"] != "larger_retrieval")
           print("Experiment 8 smoke:", json.dumps(p["paired_focus_vs_onepass"], sort_keys=True))
           PY
+      - name: Experiment 9 focused temporal cognition tests
+        run: python -m pytest -q tests/test_temporal.py
+      - name: Experiment 9 paired temporal research gate
+        run: |
+          python - <<'PY'
+          from scenario_chunking.temporal_experiment import write_temporal_benchmark
+          report = write_temporal_benchmark()
+          assert report["experiment"] == 9
+          assert len(report["trials"]) == 100
+          assert report["summary"]["temporal"]["due_wakes"] == 25
+          assert report["summary"]["memory_only"]["due_wakes"] == 0
+          assert not any(row["false_failure_claim"] for row in report["trials"])
+          for mode, metrics in report["summary"].items():
+              print("E9", mode, metrics)
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
@@ -232,4 +269,5 @@ jobs:
             results-transfer/
             results-uncertainty/
             results-scaling/
+            results-temporal/
           if-no-files-found: ignore
