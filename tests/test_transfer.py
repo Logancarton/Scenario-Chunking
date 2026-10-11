@@ -110,3 +110,25 @@ print(json.dumps({"sources": result["evidence_ids"], "value": result["score"]}))
     answer = json.loads(result.stdout)
     assert answer["sources"]
     assert answer["value"] > 0
+
+
+def test_offline_reflection_preserves_provenance_without_fabricating_feedback():
+    import pickle
+
+    run = TransferRun(7, "extended_reflection", rounds=1, distractors=1)
+    run.train()
+    weights_before = run.learner.snapshot()
+    events_before = len(run.memory.events)
+    run._phase1b_reflect()
+    assert len(run.memory.events) == events_before
+    assert run.learner.snapshot() == weights_before
+    assert run.refiner.threads
+    assert run.memory.layer_meanings
+    assert all(
+        isinstance(value, dict) and
+        value["status"] == "inferred_from_observed_outcomes" and
+        value["evidence_ids"]
+        for value in run.memory.layer_meanings.values()
+    )
+    restored = pickle.loads(pickle.dumps(run.memory))
+    assert restored.layer_meanings == run.memory.layer_meanings
