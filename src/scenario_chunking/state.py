@@ -197,5 +197,3 @@ class TransferState:
 
     def record_action(self, action: Action) -> None:
         self.attempted_actions.append(action.label)
-
-
