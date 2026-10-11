@@ -58,7 +58,24 @@ class ActionSelector:
             contradiction = -1.15 if "contradicted_key" in features else 0.0
             repeat = -0.32 if action.label in state.attempted_actions else 0.0
             exploration = self.rng.uniform(-0.065, 0.065)
-            score = base + learned + memory_evidence + clue + contradiction + repeat + exploration
+            # Ordered tasks use observed prerequisite knowledge from the one
+            # OutcomeLearner, not an independent planner or the world's graph.
+            dependency_penalty = 0.0
+            if (action.kind == "resolve" and action.key_name and
+                    hasattr(state, "completed_axes") and
+                    getattr(state, "excluded_axis", None) != "sequence"):
+                dependent = action.key_name
+                prerequisites = self.learner.prerequisites_for(dependent)
+                if "sequence" not in getattr(state, "invalidated_since", {}):
+                    dependency_penalty += sum(
+                        0.85 * strength for before, strength in prerequisites.items()
+                        if before not in state.completed_axes
+                    )
+                dependency_penalty += sum(
+                    1.1 for before in state.current_prerequisites.get(dependent, set())
+                    if before not in state.completed_axes
+                )
+            score = base + learned + memory_evidence + clue + contradiction + repeat + exploration - dependency_penalty
             reasons = [
                 f"base={base:.3f}",
                 f"learned={learned:.3f}",
