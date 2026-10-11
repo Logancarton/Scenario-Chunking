@@ -33,6 +33,31 @@ class OutcomeLearner:
         # Prediction-calibration correction, not credit for mere thought revision.
         self.refinement_bias: dict[tuple[str, str], float] = defaultdict(float)
         self.refinement_updates: list[dict[str, object]] = []
+        # Source testimony is calibrated only against subsequent causal outcomes.
+        # Directed prerequisites are learned from observed blocked execution,
+        # never copied from the environment's private dependency graph.
+        self.source_verifications: dict[tuple[str, str], list[bool]] = defaultdict(list)
+        self.prerequisite_observations: dict[tuple[str, str], int] = defaultdict(int)
+
+    def verify_source(self, person: str, context: str, correct: bool) -> None:
+        self.source_verifications[(person, context)].append(bool(correct))
+
+    def source_reliability(self, person: str, context: str) -> float:
+        outcomes = self.source_verifications[(person, context)]
+        return (1.0 + sum(outcomes)) / (2.0 + len(outcomes))
+
+    def observe_prerequisite(self, prerequisite: str, dependent: str) -> None:
+        if prerequisite == dependent:
+            return
+        self.prerequisite_observations[(prerequisite, dependent)] += 1
+
+    def prerequisite_strength(self, prerequisite: str, dependent: str) -> float:
+        return min(1.0, self.prerequisite_observations[(prerequisite, dependent)] / 2.0)
+
+    def prerequisites_for(self, dependent: str) -> dict[str, float]:
+        return {before: self.prerequisite_strength(before, after)
+                for before, after in self.prerequisite_observations if after == dependent}
+
 
     def begin_episode(self) -> None:
         self.episode_trace = []
