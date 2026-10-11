@@ -6,6 +6,7 @@ from pathlib import Path
 from .experiment import run_experiments
 from .transfer import run_transfer_experiment
 from .uncertainty import run_uncertainty_experiment
+from .scaling import run_scaling_experiment, CONDITIONS_8
 from .models import RetrievalMode
 
 
@@ -19,6 +20,11 @@ def main() -> None:
                         help="Run bounded progressive thought refinement ablations")
     parser.add_argument("--transfer", action="store_true", help="Run Experiment 6 category learning and stepwise transfer")
     parser.add_argument("--uncertainty", action="store_true", help="Run Experiment 7 adaptive uncertainty challenge")
+    parser.add_argument("--scaling", action="store_true", help="Run Experiment 8 cumulative learning and focused retrieval")
+    parser.add_argument("--training-stages", default="20,100,500,2000,10000")
+    parser.add_argument("--memory-stages", default="100,1000,5000,20000,20000")
+    parser.add_argument("--scaling-conditions", default=",".join(CONDITIONS_8))
+    parser.add_argument("--candidate-budget", type=int, default=128)
     parser.add_argument("--action-budget", type=int, default=9, help="Maximum actions per Experiment 7 novel task")
     parser.add_argument("--rounds", type=int, default=4, help="Novel rounds in transfer benchmark")
     parser.add_argument("--meaning", action="store_true",
@@ -27,6 +33,21 @@ def main() -> None:
 
     seeds = tuple(int(x.strip()) for x in args.seeds.split(",") if x.strip())
     modes = tuple(RetrievalMode(x.strip()) for x in args.modes.split(",") if x.strip())
+    if args.scaling:
+        payload = run_scaling_experiment(
+            Path(args.output), seeds=seeds,
+            stages=tuple(int(s) for s in args.training_stages.split(",")),
+            memory_targets=tuple(int(s) for s in args.memory_stages.split(",")),
+            conditions=tuple(s.strip() for s in args.scaling_conditions.split(",")),
+            rounds=args.rounds, action_budget=args.action_budget,
+            candidate_budget=args.candidate_budget)
+        for stage, conditions in payload["stage_results"].items():
+            for name, metrics in conditions.items():
+                print(f"stage={stage} {name}: completion={metrics['completion_rate']:.2f} "
+                      f"actions={metrics['mean_actions']:.2f} "
+                      f"detail={metrics['mean_detail_reads']:.1f} "
+                      f"headers={metrics['mean_header_evaluations']:.1f}")
+        return
     if args.uncertainty:
         payload = run_uncertainty_experiment(
             Path(args.output), seeds=seeds, rounds=args.rounds,
