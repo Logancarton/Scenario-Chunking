@@ -92,7 +92,8 @@ class MemoryRouter:
                 rank_header=lambda cid, q: self._score_chunk(chunk_id=cid, query=q),
             )
             hits = hits + extra
-        if self.mode == RetrievalMode.ACTIVATION and self.working_memory is not None:
+        if self.working_memory is not None:
+            # Optional WM ranking composes with E12's existing spreading router.
             # Cue reinstatement is not meaningful-use refresh.
             for hit in hits:
                 chunk = self.memory.chunks[hit.chunk_id]
@@ -195,6 +196,12 @@ class MemoryRouter:
             else:
                 activation = header.activation_at(query.current_time)
                 activation_bonus = min(0.12, 0.04 * activation)
+                # Keep SPREADING's historical activation and candidate budgets
+                # unchanged; only add the opt-in, meaningful-use WM signal.
+                if self.mode == RetrievalMode.SPREADING and self.working_memory is not None:
+                    activation_bonus += self.working_memory.bonus(
+                        chunk_id, query.goal_id, query.current_time,
+                        persistence=self.activation_persistence)
             score += sequence_bonus + activation_bonus - contradiction_penalty
             reasons.extend([
                 f"sequence={sequence_bonus:.3f}",
