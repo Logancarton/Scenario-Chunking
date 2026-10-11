@@ -352,8 +352,8 @@ class UncertaintyRun(TransferRun):
         scene = self.world.scene(self.seed, round_no)
         self._context = scene["context"]
         episode = f"uncertainty-{round_no}-{scene['object']}"
-        state = self._state(episode)
         self._resolved_change_axes = set()
+        state = self._state(episode)
         self.learner.begin_episode()
         self._write_reports(episode, scene, round_no)
         mistakes = inspections = blocked = attempts = 0
