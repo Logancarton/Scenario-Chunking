@@ -184,13 +184,26 @@ class ScalingRun(UncertaintyRun):
         query_tags = focus | frozenset({
             "goal:workshop_recovery", f"mode:{public['mode']}",
             f"phase:{public['phase']}", f"material:{public['material']}",
-            f"dependency:{dependency}"})
+            f"dependency:{dependency}", f"protocol:{public['protocol_epoch']}"})
         if self.treatment == "shuffled_evidence":
             query_tags = frozenset({
                 "goal:workshop_recovery", "pair:misaligned:untrusted"})
         query = RetrievalQuery(goal_id="workshop_recovery",
                                semantic_tags=query_tags, current_time=self.clock)
         hits, stats = self.router.retrieve(query)
+        # Evaluation-only audit: this does not add cognitive retrieval cost
+        # or enter ActionSelector. A relevant memory must be verified feedback
+        # with overlapping causal relationship evidence.
+        eligible = set()
+        for cue in focus:
+            eligible.update(self.memory.tag_index.get(cue, ()))
+        relevant = {cid for cid in eligible if
+                    self.memory.chunks[cid].transition_reason ==
+                    "observed_contextual_feedback"}
+        hit_ids = {h.chunk_id for h in hits}
+        relevant_hits = len(relevant & hit_ids)
+        retrieval_precision = relevant_hits / len(hits) if hits else 0.0
+        retrieval_recall = relevant_hits / len(relevant) if relevant else None
         actions = [Action("resolve", procedure, "procedure")
                    for procedure in self.world.PROCEDURES]
         if task.profile != "simple" and not verified:
@@ -241,6 +254,9 @@ class ScalingRun(UncertaintyRun):
         return decision, {
             "action": decision.action.label, "predicted_success": decision.predicted_success,
             "retrieved_chunk_ids": [h.chunk_id for h in hits],
+            "causal_retrieval_precision": retrieval_precision,
+            "causal_retrieval_recall": retrieval_recall,
+            "missed_causal_memories": max(0, len(relevant) - relevant_hits),
             "candidate_headers": stats.candidate_chunks,
             "header_evaluations": stats.header_evaluations,
             "detail_events": stats.active_detail_events,
@@ -362,6 +378,13 @@ class ScalingRun(UncertaintyRun):
             "mean_active_details": avg("detail_events"),
             "mean_header_evaluations": avg("header_evaluations"),
             "mean_unused_activation": avg("unnecessary_activations"),
+            "mean_causal_retrieval_precision": avg("causal_retrieval_precision"),
+            "mean_causal_retrieval_recall": statistics.mean(
+                t["causal_retrieval_recall"] for t in steps if
+                t["causal_retrieval_recall"] is not None)
+                if any(t["causal_retrieval_recall"] is not None for t in steps)
+                else None,
+            "mean_missed_causal_memories": avg("missed_causal_memories"),
             "mean_retrieval_ms": avg("retrieval_ms"),
             "mean_selection_ms": avg("selection_ms"),
             "mean_processing_evaluations": avg("interpretation_evaluations"),
@@ -430,6 +453,13 @@ def run_scaling_experiment(
                 "mean_header_evaluations": statistics.mean(
                     r["mean_header_evaluations"] for r in matched),
                 "mean_retrieval_ms": statistics.mean(r["mean_retrieval_ms"] for r in matched),
+                "mean_causal_retrieval_precision": statistics.mean(
+                    r["mean_causal_retrieval_precision"] for r in matched),
+                "mean_causal_retrieval_recall": statistics.mean(
+                    r["mean_causal_retrieval_recall"] for r in matched
+                    if r["mean_causal_retrieval_recall"] is not None)
+                    if any(r["mean_causal_retrieval_recall"] is not None for r in matched)
+                    else None,
                 "mean_processing_evaluations": statistics.mean(
                     r["mean_processing_evaluations"] for r in matched),
                 "mean_memories": statistics.mean(r["stored_memories"] for r in matched),
