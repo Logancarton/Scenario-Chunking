@@ -320,3 +320,30 @@ The paired shadow one-pass diagnostic adds **1,772** interpretation operations t
 **Controls:** Untrained structural, trained structural, trained interpreted no-reflection, limited reflection, extended reflection, larger retrieval, stronger one-pass with measured (not identical) processing budget, shuffled evidence, corrupted testimony, and individual category ablations. Identical seeds establish comparable private worlds. Metrics report goal completion, first-action accuracy, observed prerequisite blocks, mistakes, inspections, latency, active detail events, processing evaluations, calibration and seed-level results.
 
 **Critical constraints / possible failures:** Sharing role tokens across train and held-out scenes is not compositional novelty. The environment directly reports the blocker after a failed prerequisite action; it does not require independently inferring latent causes. Baseline access to costly inspection is the same, but one-pass and iterative compute budgets are not strictly matched. Correct-first-plan accuracy is not yet established: this world measures independently selected actions rather than complete submitted plans. Outcomes must be measured separately; do not claim Experiment 7 proves progressive thought helps unless matched results support it. A negative result should be retained without reducing task difficulty.
+
+
+### Experiment 7 verified five-seed result (revision after training-leakage correction)
+
+Run: https://github.com/Logancarton/Scenario-Chunking/actions/runs/38100108827 (62 complete-suite tests, 8 E7-focused tests, compilation, existing research scenarios, and diff-integrity gate passed).
+
+**Five seeds x four novel tasks = 20 tasks/condition:**
+
+| Condition | Completion | Mean actions | First action |
+| --- | ---: | ---: | ---: |
+| Untrained structural | 15% | 8.75 | 50% |
+| Trained structural | 75% | 6.75 | 60% |
+| Trained interpretation, no reflection | 80% | 6.70 | 70% |
+| Strong one-pass | 80% | 6.70 | 70% |
+| Larger retrieval | 80% | 6.70 | 65% |
+| Limited reflection | 85% | 6.25 | 95% |
+| Extended reflection | 85% | 6.25 | 95% |
+| Shuffled evidence control | 0% | 9.00 | 0% |
+| Corrupted testimony control | 80% | 6.70 | 70% |
+
+The extended-reflection condition made 15 counterfactual action changes. Paired seed completion deltas versus strong one-pass were `[0, 0, 0, 0, +0.25]`; the 2,000-draw, seed-resampled 95% bootstrap interval was `[0, +0.15]`. Therefore **no robust or statistically established improvement** is demonstrated. Limited and extended reflection were identical in completion and mean actions; deeper reflection is not justified by these results. Extended reflection executed 32,692 interpretation evaluations versus 49,869 for the larger-retrieval one-pass comparator, but this is not a matched compute allocation or matched algorithmic search budget. Do not infer superior cognition per compute from that number alone.
+
+Mean held-out source-prediction Brier score was approximately 0.170 for trained conditions, 0.250 for untrained, and 0.333 for corrupted-testimony control. This shows prediction calibration sensitivity but not a causal behavioral benefit from testimony: the corrupted-testimony control still finished 80% of tasks. Remaining source calibration and action-selection influence need stricter matched source ablations.
+
+Signal-cue ablation completion with extended reflection: Self 25%, Salience 0%, Time 20%, Sequence 5%, Person 0%. **These remove the category's signal-token cue, not every axis-specific retrieval or interpretation mechanism.** They cannot establish unique biological-style responsibilities for all five categories.
+
+**Conclusion:** This environment is harder than Experiment 6 and is executed through the shared live cognitive pathway. Reflection can cause information-seeking and sometimes help after changes, but the one-task completion improvement is too small to justify a cognitive advantage claim. The strongest next challenge is held-out causal combinations and a genuinely compute-matched one-pass policy with matched information acquisition, followed by independent replication on substantially more seeds. Sonara production remains untouched.
