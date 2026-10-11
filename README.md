@@ -1,6 +1,8 @@
 # Scenario-Chunking
 
-**Research history:** [COGNITIVE_RESEARCH_JOURNAL.md](docs/COGNITIVE_RESEARCH_JOURNAL.md) — three experiments, preserved measurements, failures and hypotheses.
+**Long-term goal:** [GOAL.md](GOAL.md) — autonomous, grounded, continuously improving cognition (vision, not implemented capability). Coding agents begin with [AGENTS.md](AGENTS.md).
+
+**Research history:** [COGNITIVE_RESEARCH_JOURNAL.md](docs/COGNITIVE_RESEARCH_JOURNAL.md) — measured experiments, preserved results, failures and hypotheses.
 
 
 A standalone, executable cognitive-architecture experiment testing whether structurally organized episodic memory can improve decisions through sequential experience while avoiding full historical retrieval.
