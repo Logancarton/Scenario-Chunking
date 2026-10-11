@@ -7,7 +7,6 @@ outcome learner, action selector and thought-thread owner are reused.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
 import copy
 import json
 import pickle
@@ -16,6 +15,8 @@ import statistics
 from pathlib import Path
 from time import perf_counter
 
+from .environment import AXES, PEOPLE, TransferWorld
+from .state import TransferState
 from .learning import OutcomeLearner
 from .meaning import MeaningInterpreter
 from .memory import EpisodicMemory
@@ -24,93 +25,11 @@ from .policy import ActionSelector
 from .refinement import ProgressiveRefiner
 from .retrieval import MemoryRouter
 
-AXES = ("self", "salience", "time", "sequence", "person")
 CONDITIONS = (
     "untrained_structural", "trained_structural", "full_no_reflection",
     "limited_reflection", "extended_reflection", "strong_one_pass",
     "shuffled_relationships",
 )
-SYMBOLS = (
-    "amber", "birch", "cobalt", "delta", "elm", "fennel", "garnet", "harbor",
-    "indigo", "jasper", "kelp", "lumen", "marble", "nectar", "opal", "piper",
-    "quill", "raven", "sable", "tulip", "umber", "violet", "willow", "zircon",
-)
-OBJECTS = ("compressor", "lifter", "conveyor", "generator", "sorter", "mixer")
-PEOPLE = ("Orin", "Sela", "Amin", "Jora", "Nemi", "Tavi", "Lora")
-
-
-class TransferWorld:
-    """Private procedural truth; no reference to this object from the policy."""
-
-    def __init__(self, seed: int) -> None:
-        rng = random.Random(seed * 101 + 29)
-        selected = rng.sample(SYMBOLS, 2 * len(AXES))
-        self.options = {axis: tuple(selected[2*i:2*i+2]) for i, axis in enumerate(AXES)}
-        self.correct = {axis: rng.choice(self.options[axis]) for axis in AXES}
-        self.original_time = next(x for x in self.options["time"] if x != self.correct["time"])
-
-    def accepted(self, axis: str, token: str, *, historical: bool = False) -> bool:
-        if axis not in AXES:
-            raise ValueError("unknown axis")
-        expected = self.original_time if historical and axis == "time" else self.correct[axis]
-        return token == expected
-
-    def scene(self, seed: int, round_no: int) -> dict:
-        rng = random.Random(seed * 1009 + round_no * 83)
-        return {
-            "object": rng.choice(OBJECTS) + "-" + str(seed + round_no),
-            "person": rng.choice(PEOPLE) + "-" + str(round_no),
-            "order": rng.sample(list(AXES), len(AXES)),
-        }
-
-
-@dataclass
-class TransferState:
-    episode_id: str
-    goal_id: str = "workshop_recovery"
-    current_time: float = 0.0
-    option_features: dict[str, frozenset[str]] = field(default_factory=dict)
-    attempted_actions: list[str] = field(default_factory=list)
-    excluded_axis: str | None = None
-    scramble: bool = False
-    choices: dict[str, tuple[str, str]] = field(default_factory=dict)
-    invalidated_since: dict[str, float] = field(default_factory=dict)
-
-    def policy_features(self, action: Action) -> frozenset[str]:
-        """Namespace new beliefs after an observed validity change.
-
-        Previously learned success is historical evidence, not a current
-        policy prior. New feedback gets distinct epoch-scoped associations.
-        """
-        features = set(self.action_features(action))
-        for axis, epoch in self.invalidated_since.items():
-            for cue in tuple(features):
-                prefix = f"signal:{axis}:"
-                if cue.startswith(prefix):
-                    features.remove(cue)
-                    features.add(f"epoch:{axis}:{int(epoch)}:{cue[len(prefix):]}")
-        return frozenset(features)
-
-    def action_features(self, action: Action) -> frozenset[str]:
-        cues = self.option_features.get(action.label, frozenset())
-        if self.excluded_axis:
-            cues = frozenset(x for x in cues if not x.startswith(f"signal:{self.excluded_axis}:"))
-        if self.scramble:
-            swapped = set()
-            for feature in cues:
-                parts = feature.split(":", 2)
-                if len(parts) == 3 and parts[0] == "signal" and parts[1] in self.choices:
-                    pair = self.choices[parts[1]]
-                    swapped.add(f"signal:{parts[1]}:{pair[1] if parts[2] == pair[0] else pair[0]}")
-                else:
-                    swapped.add(feature)
-            cues = frozenset(swapped)
-        return cues | frozenset({"action:choose", "role:workshop"})
-
-    def record_action(self, action: Action) -> None:
-        self.attempted_actions.append(action.label)
-
-
 class TransferRun:
     def __init__(self, seed: int, condition: str, *, disabled_axis: str | None = None,
                  rounds: int = 4, distractors: int = 4) -> None:
