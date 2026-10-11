@@ -62,12 +62,16 @@ def test_causal_abstraction_can_reverse_after_opposing_feedback():
     for i in range(30):
         l.learn_context_outcome(frozenset({cue}), "isolate", True,
                                 evidence_id=f"causal-{i}")
+        l.learn_context_outcome(frozenset({"pair:control"}), "isolate", False,
+                                evidence_id=f"control-{i}")
     strong = l.contextual_support(frozenset({cue}), "isolate")["score"]
     for i in range(160):
         l.learn_context_outcome(frozenset({cue}), "isolate", False,
                                 evidence_id=f"contradict-{i}")
+        l.learn_context_outcome(frozenset({"pair:control"}), "isolate", True,
+                                evidence_id=f"control-flip-{i}")
     weakened = l.contextual_support(frozenset({cue}), "isolate")["score"]
-    assert strong > 0 and weakened < strong
+    assert strong > 0 and weakened < 0
     assert len(l.context_evidence_ids[(cue, "isolate")]) <= 12
     assert ("pair:unrelated", "isolate") not in l.context_evidence_ids
 
