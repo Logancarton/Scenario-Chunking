@@ -132,3 +132,70 @@ def test_offline_reflection_preserves_provenance_without_fabricating_feedback():
     )
     restored = pickle.loads(pickle.dumps(run.memory))
     assert restored.layer_meanings == run.memory.layer_meanings
+
+
+def test_revision_invalidates_old_causal_signal_without_destroying_history():
+    run = TransferRun(61, "extended_reflection", rounds=4, distractors=2)
+    run.train()
+    axis = "time"
+    obsolete = run.world.correct[axis]
+    before = run.interpreter.transfer_evidence(
+        run._retrieve((axis,))[0], frozenset({f"signal:{axis}:{obsolete}"}), review_depth=3)
+    assert before["score"] > 0
+    cutover = run.clock + 1
+    after = run.interpreter.transfer_evidence(
+        run._retrieve((axis,))[0], frozenset({f"signal:{axis}:{obsolete}"}),
+        review_depth=3, invalidated_since={axis: cutover})
+    assert after["score"] == 0.0
+    assert after["evidence_ids"] == []
+    assert before["evidence_ids"]
+    assert all(eid in run.memory.events for eid in before["evidence_ids"])
+
+
+def test_progressive_refiner_is_reached_before_transfer_action():
+    run = TransferRun(61, "extended_reflection", rounds=4, distractors=1)
+    result = run.run()
+    plans = [t for t in result["traces"] if t["step"] == "joint_plan"]
+    assert any(t.get("thought") and t["thought"].get("version") for t in plans)
+    assert any(t.get("decision_basis") == "verify_invalidated_relationship"
+               for t in result["traces"])
+    assert any(t.get("step") == "inspect_protocol" for t in result["traces"])
+
+
+def test_recovery_and_deadline_success_are_reported_separately():
+    run = TransferRun(61, "full_no_reflection", rounds=4, distractors=1)
+    result = run.run()
+    revised = result["rounds"][2:]
+    assert all("recovered_success" in t for t in revised)
+    assert all("within_budget" in t for t in revised)
+    assert all(t["actions"] == 1 + sum(x["step"] == "resolve" for x in [])
+               or t["actions"] > 0 for t in revised)
+    assert any(t["recovered_success"] for t in revised)
+
+
+def test_feedback_keeps_multi_action_trace_and_causal_plan_record():
+    run = TransferRun(23, "extended_reflection", rounds=2, distractors=1)
+    result = run.run()
+    plan_attempts = [e for e in run.memory.events.values()
+                     if e.kind == EventKind.ACTION and e.action
+                     and e.action.kind == "integrate"]
+    assert len(plan_attempts) == 2
+    assert all(any(e.cause_event_id == action.event_id
+                       for e in run.memory.events.values()
+                       if e.kind == EventKind.OUTCOME)
+               for action in plan_attempts)
+    assert any(t.get("used_evidence_ids") for t in result["traces"]
+               if t.get("step") == "joint_plan" and t.get("thought"))
+
+
+def test_revision_notice_without_protocol_outcome_does_not_prove_new_answer():
+    run = TransferRun(61, "extended_reflection", rounds=4, distractors=0)
+    run.train()
+    old = run.world.correct["time"]
+    timestamp = run.clock + 1
+    query = run._retrieve(("time",))[0]
+    evidence = run.interpreter.transfer_evidence(
+        query, frozenset({f"signal:time:{old}"}),
+        invalidated_since={"time": timestamp}, review_depth=3)
+    assert evidence["score"] == 0
+    assert not evidence["evidence_ids"]
