@@ -307,6 +307,40 @@ class ProgressiveRefiner:
             "additional_detailed_reads": 0,
         }
 
+    def record_transfer(self, state, *, preferred: str, evidence_ids,
+                        alternatives=(), review_depth: int = 1) -> dict:
+        """Keep one evidence-grounded thought identity across transfer decisions.
+
+        Reflection revisions are recorded only when preference or supporting
+        observations change; repeated thinking cannot validate a hypothesis.
+        """
+        thread = self.thread(state)
+        self._focus(thread, state.current_time)
+        sources = tuple(sorted(set(evidence_ids)))
+        signature = (state.goal_id, preferred, sources)
+        changed = not thread.versions or thread.versions[-1].signature != signature
+        if changed and len(thread.versions) < self.max_versions:
+            thread.versions.append(ThoughtVersion(
+                number=len(thread.versions) + 1,
+                preferred_action=preferred,
+                alternatives=tuple(alternatives),
+                evidence_ids=sources,
+                memory_chunk_ids=(),
+                contradictions=(),
+                uncertainty=0.5,
+                reason="observed_evidence_review",
+                signature=signature,
+                time=state.current_time,
+            ))
+        return {
+            "thought_id": thread.thought_id,
+            "version": thread.versions[-1].number if thread.versions else 0,
+            "changed": changed,
+            "review_depth": review_depth,
+            "evidence_ids": list(sources),
+            "activation_state": thread.status_at(state.current_time),
+        }
+
     def feedback(self, state: CognitiveState, decision, *, outcome: str | None,
                  outcome_event_ids: tuple[str, ...]) -> None:
         if not decision.thought_trace:
