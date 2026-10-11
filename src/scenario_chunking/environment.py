@@ -418,8 +418,11 @@ class ContextualWorld:
     VALUES = ("stable", "unstable")
     SOURCES = ("Aster", "Beryl", "Cinder")
     FACTORS = tuple(product(range(2), repeat=4))
-    TRAIN_KEYS = tuple(x for x in FACTORS if (sum(x) % 4) != 0)
-    HOLDOUT_KEYS = tuple(x for x in FACTORS if (sum(x) % 4) == 0)
+    # Each unseen combination has a different correct procedure, but its
+    # causal sub-relations were individually encountered during training.
+    HOLDOUT_KEYS = ((0, 0, 0, 0), (1, 0, 1, 0),
+                    (0, 1, 1, 1), (1, 1, 0, 1))
+    TRAIN_KEYS = tuple(x for x in FACTORS if x not in HOLDOUT_KEYS)
 
     def __init__(self, seed: int) -> None:
         self.seed = seed
