@@ -163,6 +163,8 @@ class TransferState:
     scramble: bool = False
     choices: dict[str, tuple[str, str]] = field(default_factory=dict)
     invalidated_since: dict[str, float] = field(default_factory=dict)
+    completed_axes: set[str] = field(default_factory=set)
+    current_prerequisites: dict[str, set[str]] = field(default_factory=dict)
 
     def policy_features(self, action: Action) -> frozenset[str]:
         """Namespace new beliefs after an observed validity change.
