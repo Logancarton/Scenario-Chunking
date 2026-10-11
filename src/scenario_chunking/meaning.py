@@ -177,7 +177,7 @@ class MeaningInterpreter:
         values["wait"] = max(waiting_values) - wait_cost
         return {"values": values, "presence": beliefs, "future": soon,
                 "provenance": provenance, "report_count": len(reports)}
- 
+
     def prepare(self, hits) -> PreparedEvidence:
         """Build one index of grounded responses without duplicating any event."""
         pairs = {}
