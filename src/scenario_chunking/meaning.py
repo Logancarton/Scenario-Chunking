@@ -70,6 +70,55 @@ class MeaningInterpreter:
         self.memory = memory
         self.learner = learner
 
+    def incremental_action_values(self, cues: frozenset[str], actions: list[Action],
+                                  *, success_reward: float = 1.0,
+                                  failure_loss: float = 1.0,
+                                  costs: dict[str, float] | None = None) -> dict:
+        """Translate the one learner's conditional beliefs to action values."""
+        costs = costs or {}
+        predictions = {}
+        values = {}
+        provenance = {}
+        for action in actions:
+            procedure = action.target or action.kind
+            belief = self.learner.incremental_prediction(cues, procedure)
+            p = belief["probability"]
+            predictions[action.label] = belief
+            values[action.label] = (
+                p * success_reward - (1.0 - p) * failure_loss
+                - costs.get(procedure, 0.0))
+            provenance[action.label] = belief["evidence_ids"]
+        return {"values": values, "predictions": predictions,
+                "provenance": provenance}
+
+    def incremental_episodic_values(self, hits, cues: frozenset[str],
+                                    actions: list[Action], costs: dict[str, float]) -> dict:
+        """A strong pure-case-memory baseline with no generalized relationships."""
+        values, predictions = {}, {}
+        for action in actions:
+            similar = []
+            for hit in hits:
+                for event in self.memory.chunk_events(hit.chunk_id):
+                    if (event.kind != EventKind.OUTCOME or
+                            event.truth_status != TruthStatus.OUTCOME or
+                            event.outcome not in ("success", "failure") or
+                            event.metadata.get("procedure") != action.target):
+                        continue
+                    tags = frozenset(event.metadata.get("context_cues", ()))
+                    overlap = len(cues & tags) / max(1, len(cues | tags))
+                    similar.append((overlap * hit.score, event.event_id,
+                                    event.outcome == "success"))
+            similar.sort(reverse=True)
+            top = similar[:5]
+            total = sum(weight for weight, _, _ in top)
+            p = ((1.0 + sum(weight * int(ok) for weight, _, ok in top)) /
+                 (2.0 + total))
+            predictions[action.label] = {
+                "probability": p, "uncertainty": 1 / (1 + total),
+                "evidence_ids": [eid for _, eid, _ in top]}
+            values[action.label] = 2 * p - 1 - costs.get(action.target or action.kind, 0.0)
+        return {"values": values, "predictions": predictions}
+
     def temporal_action_values(self, state: CognitiveState, public: dict,
                                *, inspection_cost: float, wait_cost: float,
                                switch_reward: float, forecast_step: float = 1.0) -> dict:
