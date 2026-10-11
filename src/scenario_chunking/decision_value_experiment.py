@@ -271,8 +271,19 @@ class DecisionValueRun:
                    if self.state.timed_expectations["delivery:" + p].status == "due_unverified"]
             fulfilled = [p for p in sorted(self.public)
                          if self.state.timed_expectations["delivery:" + p].status == "fulfilled"]
+            absent_to_recheck = [
+                p for p in sorted(self.public)
+                if (self.state.timed_expectations["delivery:" + p].status == "verified_absent"
+                    and self.state.world_time -
+                        self.state.timed_expectations["delivery:" + p].last_verified_absent_at >= 2
+                    and self.state.world_time <= self.public[p]["deadline"])
+            ]
             target = ("proceed:" + fulfilled[0] if fulfilled else
-                      "check:" + due[0] if due else "wait")
+                      "check:" + due[0] if due else
+                      "check:" + absent_to_recheck[0] if absent_to_recheck else
+                      "switch" if all(self.state.world_time > p["deadline"]
+                                      for p in self.public.values())
+                      else "wait")
             immediate = {a.label: (2.0 if a.label == target else -2.0) for a in actions}
         if self.mode in ("learned_focus_one_pass", "compute_matched_one_pass"):
             immediate = values
@@ -300,7 +311,12 @@ class DecisionValueRun:
                 "clock_rule": self.mode == "time_triggered",
             })
         if self.mode in ("compute_matched_one_pass", "empty_reflection"):
-            # Matched computation accounting; empty reflection changes no beliefs.
+            # Actually recompute on the SAME evidence; never add fake votes.
+            self.interpreter.temporal_action_values(
+                self.state, self.public,
+                inspection_cost=self.world.inspection_cost,
+                wait_cost=self.world.wait_cost,
+                switch_reward=self.world.switch_reward)
             self.computation += 2
         elif refine and decision.thought_trace:
             self.computation += decision.thought_trace["reasoning_cycles"]
