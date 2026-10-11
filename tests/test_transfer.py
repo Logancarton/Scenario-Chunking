@@ -160,6 +160,11 @@ def test_progressive_refiner_is_reached_before_transfer_action():
     assert any(t.get("decision_basis") == "verify_invalidated_relationship"
                for t in result["traces"])
     assert any(t.get("step") == "inspect_protocol" for t in result["traces"])
+    verification = [t for t in result["traces"] if t.get("step") == "inspect_protocol"]
+    assert all(t["round"] >= run.rounds // 2 for t in verification)
+    assert all(t["thought"]["meaningfully_changed_action"] for t in verification)
+    assert all(t.get("inspection_observation_ids") for t in verification)
+    assert any(thread.outcomes for thread in run.refiner.threads.values())
 
 
 def test_recovery_and_deadline_success_are_reported_separately():
