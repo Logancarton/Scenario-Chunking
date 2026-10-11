@@ -70,6 +70,97 @@ class MeaningInterpreter:
         self.memory = memory
         self.learner = learner
 
+    def temporal_action_values(self, state: CognitiveState, public: dict,
+                               *, inspection_cost: float, wait_cost: float,
+                               switch_reward: float, forecast_step: float = 1.0) -> dict:
+        """E10: interpret public evidence into estimated consequences.
+
+        This owner estimates option values, never chooses the final action.
+        Reports are Bayesian cues weighted by historically VERIFIED reliability;
+        neither source claims nor hidden world data are treated as ground truth.
+        """
+        now = state.world_time
+        beliefs = {}
+        soon = {}
+        provenance = {}
+        values = {"switch": float(switch_reward), "stop": 0.0}
+        reports = state.beliefs.get("temporal_reports", {})
+        deps = state.beliefs.get("temporal_dependencies", {})
+        for person, props in public.items():
+            exp = state.timed_expectations["delivery:" + person]
+            promised = float(props["promised"])
+            elapsed = max(0.0, now - exp.started_at)
+            last_absent = (None if exp.last_verified_absent_at is None
+                           else exp.last_verified_absent_at - exp.started_at)
+            if exp.status == "fulfilled":
+                probability = 1.0
+                future = 1.0
+            else:
+                survivor = self.learner.temporal_survival(
+                    exp.context, promised, elapsed)
+                if last_absent is not None:
+                    before = self.learner.temporal_survival(
+                        exp.context, promised, last_absent)
+                    probability = 1.0 - survivor / max(1e-9, before)
+                else:
+                    probability = 1.0 - survivor
+                future = probability + (1 - probability) * self.learner.temporal_arrival_probability(
+                    exp.context, promised, elapsed, elapsed + forecast_step)
+                if person in reports and last_absent is None:
+                    reported, speaker, evidence_id, _ = reports[person]
+                    reliability = self.learner.temporal_source_reliability(
+                        speaker, exp.context, now)
+                    likelihood = reliability if reported else (1 - reliability)
+                    inverse = (1 - reliability) if reported else reliability
+                    probability = (probability * likelihood /
+                                   max(1e-9, probability * likelihood
+                                       + (1.0 - probability) * inverse))
+            beliefs[person] = max(0.0, min(1.0, probability))
+            soon[person] = max(beliefs[person], min(1.0, future))
+            evidence_ids = [exp.source_event_id] + list(exp.observation_ids)
+            if person in reports:
+                evidence_ids.append(reports[person][2])
+            if person in deps:
+                evidence_ids.append(deps[person][1])
+            provenance[person] = tuple(dict.fromkeys(evidence_ids))
+
+        for person, props in public.items():
+            prob = beliefs[person]
+            future = soon[person]
+            required = deps.get(person)
+            if required:
+                dep = required[0]
+                if dep in beliefs:
+                    prob *= beliefs[dep]
+                    future *= soon[dep]
+            payoff = float(props["payoff"])
+            loss = float(props["premature_loss"])
+            deadline = float(props["deadline"])
+            proceed = (prob * payoff - (1.0 - prob) * loss
+                       if now <= deadline else -loss)
+            # Inspection consumes one unit of time. It can reveal presence
+            # without forcing a premature proceed, but is not free.
+            inspect = (future * payoff + (1 - future) * max(0.0, switch_reward)
+                       - inspection_cost - wait_cost
+                       if now + forecast_step <= deadline else -inspection_cost)
+            values[f"proceed:{person}"] = proceed
+            values[f"check:{person}"] = inspect
+
+        # A clock-tick consumes a time-sensitive option; waiting is NOT free.
+        if public:
+            available_future = [
+                soon[p] * float(props["payoff"])
+                - (1.0 - soon[p]) * float(props["premature_loss"])
+                for p, props in public.items()
+                if now + forecast_step <= float(props["deadline"])
+            ]
+            values["wait"] = -wait_cost + max(
+                [0.0, switch_reward] + available_future) if available_future else -wait_cost
+        else:
+            values["wait"] = -wait_cost
+        return {"values": values, "presence": beliefs, "future": soon,
+                "provenance": provenance, "report_count": len(reports)}
+ 
     def prepare(self, hits) -> PreparedEvidence:
         """Build one index of grounded responses without duplicating any event."""
         pairs = {}
