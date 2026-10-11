@@ -57,7 +57,7 @@ def experience(seed: int, family: str, index: int) -> tuple[IncrementalDispatchW
     primitive = {f"pair:{axis}:{value}" for axis, value in factors.items()}
     primitive |= {f"pair:domain:{family}", f"pair:epoch:{epoch}"}
     relations = {
-        "pair:" + left + "&" + right
+        left + "&" + right
         for i, left in enumerate(sorted(primitive))
         for right in sorted(primitive)[i + 1:]
     }
