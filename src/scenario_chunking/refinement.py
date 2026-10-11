@@ -329,9 +329,24 @@ class ProgressiveRefiner:
         verified = bool(context.get("verified_dependency"))
         consequence = float(context.get("consequence", .5))
         reliability = float(context.get("source_reliability", .5))
+        audits = context.get("audits", {})
+        reported_rank = sorted(
+            hypotheses, key=lambda row: (
+                -audits.get(row[1].label, {}).get("reported_causal_score", 0.0),
+                row[1].label))
+        alternative_rank = sorted(
+            hypotheses, key=lambda row: (
+                -(audits.get(row[1].label, {}).get("alternative_causal_score")
+                  or 0.0), row[1].label))
+        disagree = reported_rank[0][1] != alternative_rank[0][1]
+        # Decision-contingent expected value of reducing uncertainty. Source
+        # trust is verified from prior observed inspection outcomes; the
+        # inspection-value prior never masquerades as proven goal success.
         expected_information_gain = (
-            uncertain * (1 - .5 * reliability) * consequence *
-            self.learner.observation_value()
+            uncertain * (1.0 - reliability) * consequence *
+            (0.5 + 0.5 * self.learner.observation_value()) *
+            (1.4 if disagree else 0.85) *
+            (1.2 if context.get("revision_notice") else 1.0)
         )
         inspection = next((row for row in ordered
                            if row[1].kind == "inspect_dependency"), None)
@@ -385,6 +400,7 @@ class ProgressiveRefiner:
             "reasoning_cycles": 2 if should_inspect else 1,
             "contributing_evidence_ids": list(evidence),
             "expected_information_gain": expected_information_gain,
+            "dependency_hypotheses_disagree": disagree,
             "attention_cues": sorted(context.get("attention_cues", ())),
             "meaningfully_changed_action": choice[1] != ordered[0][1]
                                       if not should_inspect else
