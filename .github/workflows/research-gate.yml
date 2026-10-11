@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "experiment/e12-unified-cognitive-learning", "main"]
   pull_request:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected", "experiment/predictive-decision-value-e10"]
   workflow_dispatch:
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   persistent-causal-e12:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e ".[test]"
       - name: E12 continuity, revision, leakage and subprocess restart tests
-        run: python -m pytest -q tests/test_causal.py
+        run: python -m pytest -q tests/test_causal.py tests/test_causal_unified.py
       - name: E12 frozen unseen combinations, fresh-seed replication and separate ablations
         run: |
           python - <<'PYTHON'
@@ -39,11 +39,41 @@ jobs:
               print(name, p["summary"])
               print(name, p["paired_reward_deltas"])
           PYTHON
+      - name: E12 unified internal controls reproduce the committed cross-platform reference
+        run: |
+          python - <<'PYTHON'
+          import json
+          from scenario_chunking.causal_experiment import write_causal_benchmark, ALL_CONDITIONS
+          reference = json.load(open("docs/e12_unified_reference.json"))
+          for protocol in ("matched", "online"):
+              r = write_causal_benchmark("results-e12-unified/ci-" + protocol, seeds=(1301,),
+                                         protocol=protocol, conditions=ALL_CONDITIONS, workers=4)
+              for mode, expected in reference[protocol].items():
+                  got = r["summary"][mode]
+                  for key, value in expected.items():
+                      assert round(got[key], 9) == value, (protocol, mode, key, got[key], value)
+              print(protocol, {m: round(v["reward"], 4) for m, v in r["summary"].items()})
+          PYTHON
+      - name: E12 challenge smoke (exception vs regime change, no-change control)
+        run: |
+          python - <<'PYTHON'
+          from scenario_chunking.causal_challenges import run_challenges
+          r = run_challenges(names=("exception", "abrupt", "no_change"), seeds=(1301,),
+                             conditions=("explanation_full", "unified"), workers=2)
+          for name, c in r["challenges"].items():
+              print(name, {m: {k: v for k, v in row.items() if k.startswith(("final_", "regime"))}
+                           for m, row in c["summary"].items()})
+          assert r["challenges"]["no_change"]["summary"]["unified"]["regime_flags"] == 0
+          assert r["challenges"]["exception"]["summary"]["unified"]["regime_flags"] == 0
+          assert r["challenges"]["abrupt"]["summary"]["unified"]["regime_flags"] >= 1
+          PYTHON
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: e12-persistent-causal-artifacts
-          path: results-e12
+          path: |
+            results-e12
+            results-e12-unified
           if-no-files-found: error
 
   incremental-refinement-e11:

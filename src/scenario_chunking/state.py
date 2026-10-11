@@ -32,6 +32,28 @@ class TimedExpectation:
 
 
 @dataclass
+class Timeline:
+    """Deterministic, injectable simulated clock for a continuing learner.
+
+    Elapsed time and the number of processed experiences are different
+    quantities: two consecutive experiences may be minutes or years apart.
+    Advancing the clock never teaches anything; it only changes what is recent.
+    """
+    now: float = 0.0
+    experiences: int = 0
+
+    def advance(self, *, elapsed: float | None = None, at: float | None = None) -> float:
+        if (elapsed is None) == (at is None):
+            raise ValueError("advance by elapsed time or to an absolute time, not both")
+        target = self.now + float(elapsed) if elapsed is not None else float(at)
+        if not math.isfinite(target) or target < self.now:
+            raise ValueError("simulated time is finite and monotonic")
+        self.now = target
+        self.experiences += 1
+        return self.now
+
+
+@dataclass
 class CognitiveState:
     episode_id: str
     goal_id: str = "retrieve_object_from_locked_container"
@@ -186,6 +208,7 @@ class CognitiveState:
         self.attempted_actions.append(action.label)
 
     def incremental_context(self, cues: frozenset[str], timestamp: float) -> None:
+        # timestamp is simulated event time (a Timeline value), not a count.
         self.context_cues = cues
         self.current_time = timestamp
 

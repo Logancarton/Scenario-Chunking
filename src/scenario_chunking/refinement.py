@@ -53,6 +53,11 @@ class ThoughtThread:
     causal_anchors: dict[str, str] = field(default_factory=dict)
     activation_strength: float = 1.0
     activation_last_time: float = 0.0
+    # E12: an investigation's open questions persist with its identity. Attention
+    # (activation) may fade; neither the questions nor learned knowledge decay.
+    open_reviews: list[dict[str, object]] = field(default_factory=list)
+    review_history: list[dict[str, object]] = field(default_factory=list)
+    last_outcome: dict[str, object] | None = None
 
     def activation_at(self, now: float, decay_rate: float = 0.08) -> float:
         return self.activation_strength * math.exp(-decay_rate * max(0.0, now - self.activation_last_time))
@@ -81,6 +86,8 @@ class ProgressiveRefiner:
             raise ValueError('thought capacity must be positive with focused <= active')
         self._active: dict[str, ThoughtThread] = {}
         self.threads: dict[tuple[str, str], ThoughtThread] = {}
+        self.max_open_reviews = 2
+        self.review_patience = 8
 
     def thread(self, state: CognitiveState) -> ThoughtThread:
         key = (getattr(state, "thought_key", None) or state.episode_id, state.goal_id)
@@ -531,10 +538,28 @@ class ProgressiveRefiner:
             "activation_state": thread.status_at(state.current_time),
         }
 
-    def record_causal_revision(self, state: CognitiveState, update: dict, outcome) -> dict:
-        """Record the learner's revision in the SAME explanation thread."""
+    def attention_status(self, state: CognitiveState) -> str:
+        """Read-only: the thread's attention on arrival, before it is refocused."""
+        key = (getattr(state, "thought_key", None) or state.episode_id, state.goal_id)
+        thread = self.threads.get(key)
+        return "absent" if thread is None else thread.status_at(state.current_time)
+
+    def pending_reviews(self, state: CognitiveState, *, scope, procedure: str) -> list[dict]:
+        """Open questions this continuing thought carries for one scope/action."""
         thread = self.thread(state)
-        self._focus(thread, state.current_time)
+        return [dict(r) for r in thread.open_reviews
+                if r["scope"] == list(scope) and r["procedure"] == procedure]
+
+    def record_causal_revision(self, state: CognitiveState, update: dict, outcome, *,
+                               now: float | None = None) -> dict:
+        """Record the learner's revision in the SAME explanation thread.
+
+        now is the simulated acquisition time of the outcome; processing ticks
+        (state.current_time after apply_signal) are not elapsed time.
+        """
+        now = state.current_time if now is None else now
+        thread = self.thread(state)
+        self._focus(thread, now)
         hypotheses = tuple(update.get("hypotheses", ()))
         signature = (outcome.event_id, tuple(update["updated"]))
         if len(thread.versions) < self.max_versions:
@@ -545,15 +570,45 @@ class ProgressiveRefiner:
                 uncertainty=1-min((h["confidence"] for h in hypotheses), default=0.0),
                 reason=("explanation_revised" if update.get("revised")
                         else "observed_evidence_revision"), signature=signature,
-                time=state.current_time, hypotheses=hypotheses))
+                time=now, hypotheses=hypotheses))
         thread.outcomes.append({"episode_id": state.episode_id,
                                 "event_id": outcome.event_id, "updated": update["updated"],
                                 "explanation": update.get("explanation")})
         del thread.outcomes[:-self.max_versions]
+        # Chronology for sequence/time meaning: what this investigation last did.
+        thread.last_outcome = {"procedure": outcome.metadata.get("procedure"),
+                               "outcome": outcome.outcome, "time": now,
+                               "event_id": outcome.event_id}
+        # The learner validated and resolved reviews; the thread only carries them.
+        status = update.get("review_status") or {}
+        still_open = []
+        for review in thread.open_reviews:
+            verdict = status.get(review["review_id"])
+            age = review.get("experiences", 0) + (1 if verdict is not None else 0)
+            if verdict == "resolved" or age > self.review_patience:
+                thread.review_history.append({**review, "closed_by": outcome.event_id,
+                    "status": "resolved" if verdict == "resolved" else "abandoned",
+                    "time": now})
+            else:
+                still_open.append({**review, "experiences": age})
+        new = update.get("review")
+        if new is not None and status.get(new["review_id"]) != "resolved":
+            still_open.append({**new, "experiences": 0, "opened_time": now})
+        elif new is not None:
+            thread.review_history.append({**new, "closed_by": outcome.event_id,
+                                          "status": "resolved", "time": now})
+        # Bounded: the oldest open question yields to a newer surprise.
+        while len(still_open) > self.max_open_reviews:
+            dropped = still_open.pop(0)
+            thread.review_history.append({**dropped, "closed_by": outcome.event_id,
+                                          "status": "displaced", "time": now})
+        thread.open_reviews = still_open
+        del thread.review_history[:-self.max_versions]
         return {"thought_id": thread.thought_id, "version": len(thread.versions),
                 "updated": update["updated"], "evidence_id": outcome.event_id,
                 "explanation_before": update.get("explanation_before"),
-                "explanation": update.get("explanation"), "revised": update.get("revised", False)}
+                "explanation": update.get("explanation"), "revised": update.get("revised", False),
+                "open_reviews": [r["review_id"] for r in thread.open_reviews]}
 
     def diagnose_causal(self, state: CognitiveState, outcome, retrieved_events, *,
                         probability: float) -> dict:

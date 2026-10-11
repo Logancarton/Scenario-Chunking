@@ -712,13 +712,13 @@ These are observed results from the GitHub E11 replication job following the ini
 
 **Protocol changes from E11:** Before any outcome, eight of each family's 32 factor combinations are withheld (`curriculum`). Every held-out decision is made from a deep copy of the *same frozen* post-training state with learning disabled, so held-out labels neither teach nor reactivate memory (E11's final-eight window kept learning). The marker is randomized and balanced within each split and epoch. Coordination's two epochs each span the full factorial space, so epoch cannot proxy channel. Five design seeds (7, 23, 61, 101, 149); 160 held-out decisions per condition.
 
-### E12a — contrast fragments (negative)
+### Historical treatment 1 — contrast fragments (negative; formerly labelled E12a)
 
 Codex added a persistent per-family `ThoughtThread`, a bounded same-action/same-scope contrast diagnosis (`ProgressiveRefiner.diagnose_causal`), and one- and two-literal `CausalHypothesis` fragments with retained support and contradiction provenance. Result: held-out reward −0.0375 vs episodic-only −0.0205 (Δ −0.017, interval [−0.120, +0.086]), and the continuity ablation produced *identical* decisions. Diagnosis of the trace: every condition chose `standard` on 90–95% of training cases, so almost no evidence about `express` existed. Every learner converged on "nearly always standard" (held-out −0.0575). Fragments also never form a complete explanation (e.g. `open AND (day OR Alex)`), so there is nothing to revise.
 
 **Headroom check.** An idealized Bayesian learner that enumerates ~5,000 small DNF rules (ε = 0.09) reaches +0.116 held-out reward from uniformly explored *bandit* data (+0.144 with full feedback); the oracle is +0.345. The benchmark can show the effect; the E12a learner could not.
 
-### E12b — one revisable explanation per action, with selector-owned exploration
+### Historical treatment 2 — one revisable explanation per action, with selector-owned exploration (formerly labelled E12b)
 
 * **Exploration (plan item 5, done first because it is a precondition).** `ActionSelector._optimistic` adds a count-based UCB bonus κ·√(ln(1+N)/(1+nₐ)) per task scope, during training only. It is learner-agnostic, so every condition explores under the same rule; predictions stay unbiased. Held-out choices remain greedy. κ = 0.5 was fixed before measurement; κ ∈ {0.25, 1.0} were also run on E12a and did not rescue it.
 * **Explanation (plan item 2).** `OutcomeLearner.explanation_feedback` keeps an `ExplanationBank` per (domain, epoch, action): a beam of ≤48 complete rules (DNF, ≤3 terms of ≤2 literals), each scored against ≤64 retained observations under an explicit noise model (ε = 0.1) with a complexity price. Each experience *edits the current best eight rules* (add term, drop term, specialize, generalize) using literals from the new case; contrasts (plan items 1 and 3) only seed edit material. Every rule carries its operator, originating evidence id, and support and contradiction ids. `explanation_prediction` is read-only. The `ThoughtThread` records each revised explanation as a new version.
@@ -754,3 +754,135 @@ Replication held-out reward: explanation_full +0.1725, episodic_only +0.0570, no
 **Limitations and threats:** (1) The beam design was prototyped on the design seeds, which is a forking-paths risk; the fresh-seed replication is the evidence to rely on. (2) Synthetic world with a known small-DNF rule class; the explanation language matches it, so this does not show discovery of structure outside that language. (3) Intervals are normal approximations over 5 and 10 seeds. (4) Training reward is not uniformly better (replication: +0.067 vs episodic +0.074) because exploration has a price. (5) Held-out reward is still well below the oracle (+0.345) and near the ideal-Bayes ceiling (+0.116 on design seeds). (6) Five-axis integration (plan item 4) has not been attempted; per the E12 objective it should follow, not precede, this result.
 
 **Verification:** `tests/test_causal.py` covers forming, revising in place and predicting an unseen context; read-only prediction and replay idempotence; bounded beam and evidence; an evidence-equal continuity ablation; selector-owned, training-only exploration; a frozen held-out fork; potential-outcome isolation; and subprocess restart. Full suite: 125 passed locally (Python 3.14). `EpisodicMemory` id counters became plain integers because `itertools.count` no longer pickles on 3.14. Reproduce with `python -m scenario_chunking.causal_experiment`, which writes `results-e12/`, `results-e12/replication/` and `results-e12/no-exploration/`. Research runner only; Sonara production unchanged.
+
+### Unified persistent cognitive learning — internal controls, matched evidence, adaptation (2026-10-11)
+
+Branch `experiment/e12-unified-cognitive-learning`, started from `c69a51b` (identical on `main` and the E12 branch at start). This continues Experiment 12 inside the same framework; every comparison below is an internal E12 treatment, not a new experiment.
+
+**Question.** Can one continuing learner build an explanation, revise it from individual experiences, keep still-valid knowledge, tell a contextual exception from a changed world, and apply what it learned to new situations? Which parts of the historical E12 gain are attributable to explanation persistence, thought identity, retrieval anchoring, search effort or contrast?
+
+**Baseline reproduced before any change** (Python 3.11.17, macOS, seeds as published). Replication: episodic +0.0570 / 54.38%, one-pass +0.0760 / 55.00%, no_continuity +0.0688 / 57.19%, no_contrast +0.1443 / 60.94%, explanation_full +0.1725 / 62.50%. This is exact to four decimals. Full suite: 125 passed. After the refactor, all three historical result sets (primary, replication, no-exploration) are content-identical: same predictions, actions, rewards and update contents. The order of the diagnostic `proposed` list already varied with Python's string-hash seed. Golden digests of the original treatments are now tested (`test_original_e12_treatments_are_frozen_byte_for_byte`).
+
+**Receiving owners (traced, caller to callee).** `CausalRun.act/deliver` → `CognitiveState` (context, time) → `ProgressiveRefiner.thread` (identity, anchors, attention) → `MemoryRouter.retrieve` (bounded, anchor-aware) → `MeaningInterpreter.incremental_action_values` → `OutcomeLearner.explanation_prediction` (`ExplanationBank`) → `ActionSelector.select` (exploration, refinement) → world execution → outcome event in `EpisodicMemory` → `ProgressiveRefiner.diagnose_causal` (contrast) → `OutcomeLearner.explanation_feedback` (the only owner that revises explanations) → `ProgressiveRefiner.record_causal_revision`.
+
+Tracing showed the following before any measurement. In original E12 the `ThoughtThread` never influences a prediction: predictions come from the learner's bank keyed by (domain, epoch, action). The thread's only path to behaviour is anchors → retrieval → availability of a contrast. `refine_incremental` with `risk_price = 0` picks exactly the one-pass value argmax. The historical `no_continuity` control removed three things at once: thread identity, anchors and the persistent rule beam.
+
+**Donors inspected (read-only):**
+* Sonara `test_stage_12_7c_hypothesis_revision.py`, `cognition.py`, `state.py`, `contracts.py`. Adopted: supported/contradicted/superseded history retained, "one event never converges", "repetition is not evidence", owner-validated scoped revision. Rejected: the contract/ledger machinery.
+* Sonara `test_active_thought_{continuity,residency}.py`, `test_thought_chain_identity.py`. Adopted: "decay is attention fading, not forgetting", analytic decay on elapsed time, and suspend/resume without deleting knowledge.
+* sonara-clean `outcome_learning.py`, `da_rpe.py`, `credit_assignment.py`. Adopted: surprise = error × confidence. Rejected: neuromodulator EMA telemetry.
+* Sonara-2 `neural/representation.py`, `population.py`. Adopted: deterministic k-winner competition with stable tie-break and local adaptation of winners. Rejected: LIF dynamics and the NumPy dependency, since no dependency was added.
+
+**Architecture changes (all in existing owners; every new switch defaults off, which is exactly original E12):**
+* `ExplanationBank` (learning.py):
+  * **Durable evidence:** per-context sufficient statistics (bounded at 256 contexts, eviction counted) separate durable knowledge from the 64-item active provenance window. Duplicate ids are rejected beyond the window.
+  * **Append-only explanation lineage**, keyed to the explanation held *before* the evidence. The historical `explanation_before`/`revised` fields are computed after the evidence is added and therefore miss re-scoring-only changes; they are kept unchanged and this limitation is documented here.
+  * **Regime detection.** The trigger is prequential misses (wrong predictions made *before* each outcome) ≥ 5 of the last 12. The test is then a segmented likelihood: the best old rule plus the best recent rule must beat the joint rule by 8 nats, using a bounded 2-round refit on the recent window. The superseded regime is archived as the rule that best explained *its* evidence, never relabelled false, bounded to 4, and reactivated if it again explains recent evidence. A first version triggered on post-update fit; it failed because ordinary revision contorts a 3-term rule to fit both regimes. That failure is why the trigger is prequential.
+  * **Directed review:** a confident wrong prediction recruits error-directed edits (exclude or include that context) and opens a review.
+  * **Sparse recruitment:** k = 3 winners among the context literals, frozen or locally adapted toward marginal association.
+  * Explicit `rules_scored` / `scoring_work` accounting. Malformed evidence (non-boolean outcome, empty id) raises before any mutation.
+* `ProgressiveRefiner`/`ThoughtThread` (refinement.py): open reviews carried by identity (bounded at 2, patience of 8 experiences, resolved/abandoned/displaced history), chronology (`last_outcome`), a read-only `attention_status`, and simulated acquisition time instead of processing ticks.
+* `MeaningInterpreter.contextual_literals`: sequence (previous procedure and outcome of the continuing thought) and elapsed-time literals. They are offered as candidate evidence and enter an explanation only if the evidence-scored rules adopt them.
+* `Timeline` (state.py): an injectable, monotonic simulated clock, separate from experience count. `CognitiveState.apply_signal` still advances a processing tick for older experiments; E12 no longer uses that tick as time.
+* `IncrementalDispatchWorld`: private noiseless rule separated (`causal_rule`, `counterfactual_truth`, evaluation-only), plus `scripted` challenge worlds. Existing outcomes are unchanged.
+* `CausalRun`: one path, with `act` and `deliver` split (delayed feedback, event time separate from acquisition time). Matched-evidence `behavior`. `Treatment` switches.
+* Harness: `causal_challenges.py` contains streams and probes only.
+
+**Internal controls (one factor at a time from `explanation_full` unless named):** `beam_reset` (structure rebuilt each experience, identity and anchors kept), `fresh_search` (rebuilt with 3 search rounds, more compute), `no_identity` (no continuing thread, hence no anchors; beam persists), `no_anchor` (identity kept, anchors not used), `no_contrast`, `durable`, `regime`, `directed`, `meaning`, `decay`, `sparse_frozen`, `sparse_adaptive`. Unified variants: `unified`, `unified_no_identity`, `unified_no_anchor`, `unified_plus_{directed,sparse,meaning}`. The six original conditions are kept frozen.
+
+**Protocols and seed separation.**
+* *Matched evidence:* a fixed hash-uniform behavior policy acts during training, so all learners receive the identical public context, executed action, outcome, evidence id and chronology. Unexecuted outcomes never enter learning (tested by flipping them).
+* *Online:* each agent acts with the shared UCB exploration (κ = 0.5).
+* *Challenges:* matched-evidence streams with private truths, 16–17 treatments each.
+
+Development used design seeds 7–149 and challenge seeds 11–29 only. The unified configuration was chosen on those, then frozen. **Final seeds 1301–2213 (10) were run once.** Intervals are seed-paired percentile bootstraps (deterministic, 2000–4000 resamples). Two harness bugs were fixed before the final run: the `long_gap` truth was computed after the family tag had been removed, and the `sequence` probe scored the wrong step. A `meaning` crash (outcome stamped one processing tick ahead of the clock) was also fixed before the final run.
+
+**Mechanism selection on development data.**
+* Regime detection was supported: abrupt +0.25 and gradual +0.33 final accuracy, 0 false flags, 0 flags on exceptions.
+* Durable evidence helped abrupt change but *hurt gradual change when used alone* (−0.19). It is enabled only together with regime detection.
+* Directed review, meaning, decay and sparse recruitment were not supported.
+
+**Unified = explanation_full + durable evidence + regime detection.**
+
+#### Final results — E12 benchmark (10 fresh seeds, 320 frozen held-out decisions per condition)
+
+| Condition | Matched reward | Matched all-action Brier | Online reward | Online success | Online all-action Brier | Rules scored / experience |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| episodic_only | +0.0727 | 0.2388 | +0.0992 | 56.56% | 0.2379 | 0 |
+| strong_one_pass | +0.0597 | 0.2388 | +0.0780 | 55.62% | 0.2460 | 0 |
+| explanation_full (original E12) | +0.0295 | **0.2356** | +0.0838 | 57.81% | **0.2093** | 328 / 323 |
+| no_continuity (historical bundle) | +0.0760 | 0.2645 | +0.0483 | 55.94% | 0.2698 | 47 |
+| beam_reset | +0.0760 | 0.2645 | +0.0483 | 55.94% | 0.2698 | 47 |
+| fresh_search (≈1.6× compute) | +0.0268 | 0.2578 | +0.0685 | 56.88% | 0.2564 | 518 / 538 |
+| no_identity / no_anchor | identical to explanation_full | — | identical | — | — | 328 |
+| unified (and both continuity variants) | identical to explanation_full | — | identical | — | — | 328 |
+| unified_plus_directed | +0.0260 | 0.2308 | +0.1165 | 59.38% | 0.2032 | 329 |
+| unified_plus_sparse | +0.0070 | 0.2604 | +0.0845 | 58.13% | 0.2229 | 215 |
+| unified_plus_meaning | +0.0348 | 0.2517 | +0.0388 | 55.94% | 0.2343 | 449 |
+
+Paired (explanation_full minus X), 10 seeds:
+* **Online reward vs episodic:** −0.016 [−0.059, +0.031] (5/5). The historical +0.116 reward advantage **does not replicate** on fresh seeds.
+* **Online all-action Brier vs episodic:** −0.029 [−0.046, −0.011]. Better predictions do replicate.
+* **Persistence (vs beam_reset):** Brier −0.029 [−0.048, −0.008] matched and −0.061 [−0.092, −0.032] online. Explanation truth accuracy 0.757 vs 0.670 (matched).
+* **Persistence and reward:** matched reward −0.047 [−0.115, +0.022] and online +0.036 [−0.017, +0.094]. Not significant either way.
+* **Thought identity and anchoring:** exactly 0.000 on every metric in both protocols.
+* **Contrast:** matched reward −0.009 [−0.024, 0.000] and online +0.020 [−0.018, +0.066]. Unsupported, as historically.
+* **Directed review (online):** +0.033 [−0.004, +0.077], 5 positive / 1 negative seeds. The direction matches development (+0.059) but the interval includes zero.
+
+Historical gate re-run (`write_all`) reproduces the published E12 numbers exactly.
+
+#### Final results — controlled challenges (10 fresh seeds; explanation-family probes are read-only)
+
+| Challenge (metric) | one-pass | beam_reset | explanation_full | unified | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Contextual exception: exception-context accuracy / retention of original context | 0.975 / 0.675 | 0.931 / 0.744 | **1.000 / 1.000** | **1.000 / 1.000** | 0 regime flags; adapts in 11 steps |
+| Same with feedback delayed by 6 experiences | 0.975 / 0.675 | 0.931 / 0.744 | 1.000 / 1.000 | 1.000 / 1.000 | adapts in 17 steps |
+| Abrupt change A→B→A (final accuracy) | 0.709 | 0.594 | 0.534 | **0.922** | unified − full +0.388 [+0.300, +0.484], 10/10 |
+| Steps to ≥ 80% after change 1 / change 2 | 549 / 519 | 536 / 506 | never in window | **31 / 34** | historical regime accuracy 0.934 |
+| Gradual change (final accuracy) | 0.412 | 0.494 | 0.459 | **0.847** | +0.388 [+0.297, +0.469], 10/10; durable alone 0.384 |
+| No-change control (false regime flags; explanation changes) | — | 0 ; 124 | 0 ; 11.2 | **0 ; 10.8** | |
+| Random unseen structures, held-out combinations | 0.669 | 0.631 | 0.963 | 0.963 | structures drawn per seed |
+| Representable 2-term DNF / unrepresentable 3-parity | 0.766 / 0.487 | 0.703 / 0.500 | 0.988 / 0.738 | 0.994 / 0.713 | parity is a representation limit |
+| Sequence-dependent rule (final; prequential agreement) | 0.731 ; 0.843 | 0.681 ; 0.758 | 0.756 ; 0.848 | 0.688 ; 0.849 | meaning: **1.000 ; 0.978** (+0.244, 9/0) |
+| Salient random distractor (accuracy; unsupported literals) | 0.786 | 0.925 ; 0.3 | 0.988 ; 0.5 | 0.988 ; 0.5 | |
+| Long gaps (years between blocks): accuracy α/β | 0.709 / 0.778 | 0.844 / 0.747 | 0.931 / 0.978 | 0.931 / 0.978 | decay changes anchors 158→144, headers unchanged |
+
+Mechanism-level results on the challenges:
+* **Durable alone:** abrupt +0.237 [+0.147, +0.328] but gradual −0.075 [−0.191, +0.016]. This is the negative interaction seen in development.
+* **Unified costs:** about 12% more rule scoring than explanation_full (46.6k vs 42.2k on the exception stream). Parity −0.025 [−0.072, +0.003] and sequence −0.069 [−0.175, +0.019] are inconclusive.
+* **Meaning:** useful only where order matters (sequence +0.244, 9/0). It costs elsewhere (unified_plus_meaning parity −0.119 [−0.178, −0.066]; matched benchmark Brier +0.016) and adds about 35% scoring work.
+* **Sparse adaptive:** 28–38% less scoring work. Accuracy is within ±0.03 on most streams, but parity −0.056 with unified and benchmark Brier is worse.
+* **Directed review:** opens about 12 reviews per stream and carries them across experiences, with no measurable effect on any challenge.
+
+**Answers.**
+1. *Form and evolve a continuing explanation:* **yes**, and lineage shows revision in place. The **persistent rule beam is the active ingredient**: removing it is the worst explanation treatment on every challenge and on Brier in both protocols. Fresh search with ~1.6× compute does not substitute for it.
+2. *Correct without destroying valid knowledge:* **yes** for contextual exceptions (100% retention vs 67–74% for one-pass and beam reset). The durable-evidence test shows the original window learner forgets after 64 observations while durable evidence keeps the relationship.
+3. *Thought identity independently:* **no measurable effect** in any protocol or challenge (identical to 9 decimals). The historical "continuity" gain belongs to beam persistence. Identity carries reviews and chronology, but neither produced a benefit.
+4. *Prediction-error-directed refinement:* as a regime trigger (prequential surprise), **yes**: it is what makes change detection work. As directed per-rule review, **no demonstrated benefit beyond the existing likelihood update** (online +0.033, inconclusive).
+5. *Exception vs changed world:* **yes, on these streams.** 0 regime flags on exceptions and on 180-step no-change noise; 2/2 changes flagged on abrupt; about 31 steps to adapt instead of never within the window. History is retained (93% accuracy of the archived regime). One reactivation occurred on development seeds and is proven in a test; archived rules are often contorted, so reactivation is not reliable.
+6. *Time-sensitive attention:* attention and knowledge are separated (one minute vs one year apart gives identical learned state; dormant threads reactivate on relevant cues; unrelated experiences change nothing). **No accuracy or efficiency gain**, because anchors compete inside the same header budget.
+7. *Sparse recruitment:* **efficiency, not generalization**: 28–38% fewer rule evaluations at similar accuracy on most streams, worse calibration on the benchmark. Not enabled.
+8. *Integrated learner vs original on unseen conditions:* **identical on the E12 benchmark**, so no regression and no gain. **Large gains under nonstationarity** (+0.39 on abrupt and gradual change), **equal** on exceptions, unseen structures, distractors and long gaps, and slightly worse (inconclusive) on parity and sequence.
+9. *Failed to improve:* thought identity, retrieval anchoring, time-decay attention, directed review, contrast seeding, meaning in general (helps only on sequence), sparse recruitment (accuracy), and durable evidence without change detection.
+10. *Strongest limitation:* the decision-reward advantage of explanation learning over episodic memory does not replicate on fresh seeds even though prediction quality does. Second limitation: the hypothesis language (≤3 terms of ≤2 literals; parity at 0.71–0.74).
+
+**Cognitive costs.** Explanation learners score about 320–330 rules per experience (beam_reset 47, fresh_search about 520) and store about 160 KB (matched) to 300 KB (online) of pickled learner+thought state per run, vs 2 KB for episodic counters. Retrieval headers and detail events are identical across explanation treatments; anchors do not reduce retrieval work. Unified adds no scoring work on the benchmark (327.7 = 327.7 rules per experience) and about 10–12% on challenge streams, from regime tests and refits.
+
+**Completion status.**
+* *Built + Integrated + Enabled:* durable evidence, regime detection with archive and reactivation, explanation lineage, injectable timeline, timeline-based thread chronology.
+* *Built + Integrated (controls, not enabled):* directed review, meaning literals, decay-gated anchors, sparse recruitment, the identity/anchor/beam/search controls, matched protocol, delayed delivery.
+* *Restart verified:* the unified run restores in a fresh process and learns the next experience with the same thought identity.
+* *Full gate:* local (145 tests; historical gates). CI status is recorded with the commit.
+
+**Limitations.** Synthetic worlds whose truths are mostly within the DNF language; 10 final seeds; bootstrap intervals over seeds. Regime parameters (window 12, 8 nats) were set on development seeds. Detection requires about 12 contradicting observations of the *same action*. The archived rule is a beam member and can be contorted. The `regime_reactivated` path fired once in development and was not measured as a separate outcome. Meaning covers only sequence and elapsed time: person is already a public literal, salience is not causal evidence, and source reliability does not exist in this world. The benchmark's labelled epoch keeps regime detection inert there.
+
+**Next research question.** Why does better-calibrated explanatory prediction (Brier −0.03, truth agreement +0.12) fail to yield better held-out decisions than episodic recall on fresh seeds? Is the bottleneck the conversion of explanation uncertainty into action value and exploration, or noise in a 320-decision reward estimate?
+
+**Reproduce.**
+* Historical gate: `python -m scenario_chunking.causal_experiment` writes `results-e12/`.
+* Unified benchmark: `python -c "from scenario_chunking.causal_experiment import write_unified; write_unified()"` writes `results-e12-unified/{matched,online}`.
+* Challenges: `python -m scenario_chunking.causal_challenges` writes `results-e12-unified/challenges`.
+* Tests: `python -m pytest tests/test_causal.py tests/test_causal_unified.py`.
+* CI reproduces the seed-1301 unified reference in `docs/e12_unified_reference.json` to 9 decimals on Linux.
+
+Research runner only; the Sonara production repositories were read, not modified.

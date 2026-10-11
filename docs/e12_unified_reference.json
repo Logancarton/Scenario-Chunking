@@ -1,0 +1,282 @@
+{
+  "matched": {
+    "beam_reset": {
+      "all_action_brier": 0.304954786,
+      "hypotheses_examined": 44,
+      "reward": -0.1425,
+      "truth_agreement": 0.5625
+    },
+    "contrast_fragments": {
+      "all_action_brier": 0.268564619,
+      "hypotheses_examined": 34.75,
+      "reward": -0.16,
+      "truth_agreement": 0.46875
+    },
+    "decay": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "directed": {
+      "all_action_brier": 0.246807574,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "durable": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "episodic_only": {
+      "all_action_brier": 0.238174112,
+      "hypotheses_examined": 0,
+      "reward": -0.0825,
+      "truth_agreement": 0.640625
+    },
+    "explanation_full": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "fresh_search": {
+      "all_action_brier": 0.288862495,
+      "hypotheses_examined": 96,
+      "reward": -0.0225,
+      "truth_agreement": 0.59375
+    },
+    "meaning": {
+      "all_action_brier": 0.22954216,
+      "hypotheses_examined": 96,
+      "reward": 0.1075,
+      "truth_agreement": 0.734375
+    },
+    "no_anchor": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "no_continuity": {
+      "all_action_brier": 0.304954786,
+      "hypotheses_examined": 44,
+      "reward": -0.1425,
+      "truth_agreement": 0.5625
+    },
+    "no_contrast": {
+      "all_action_brier": 0.245512337,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "no_identity": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "regime": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "sparse_adaptive": {
+      "all_action_brier": 0.251637173,
+      "hypotheses_examined": 96,
+      "reward": 0.065,
+      "truth_agreement": 0.671875
+    },
+    "sparse_frozen": {
+      "all_action_brier": 0.273728101,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.546875
+    },
+    "strong_one_pass": {
+      "all_action_brier": 0.24362394,
+      "hypotheses_examined": 0,
+      "reward": -0.0825,
+      "truth_agreement": 0.53125
+    },
+    "unified": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "unified_no_anchor": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "unified_no_identity": {
+      "all_action_brier": 0.247020424,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "unified_plus_directed": {
+      "all_action_brier": 0.246807574,
+      "hypotheses_examined": 96,
+      "reward": -0.0125,
+      "truth_agreement": 0.6875
+    },
+    "unified_plus_meaning": {
+      "all_action_brier": 0.22954216,
+      "hypotheses_examined": 96,
+      "reward": 0.1075,
+      "truth_agreement": 0.734375
+    },
+    "unified_plus_sparse": {
+      "all_action_brier": 0.251637173,
+      "hypotheses_examined": 96,
+      "reward": 0.065,
+      "truth_agreement": 0.671875
+    }
+  },
+  "online": {
+    "beam_reset": {
+      "all_action_brier": 0.218576326,
+      "hypotheses_examined": 45.5,
+      "reward": -0.0225,
+      "truth_agreement": 0.75
+    },
+    "contrast_fragments": {
+      "all_action_brier": 0.233388262,
+      "hypotheses_examined": 40.75,
+      "reward": -0.0075,
+      "truth_agreement": 0.625
+    },
+    "decay": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "directed": {
+      "all_action_brier": 0.221410476,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "durable": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "episodic_only": {
+      "all_action_brier": 0.232662988,
+      "hypotheses_examined": 0,
+      "reward": 0.1275,
+      "truth_agreement": 0.671875
+    },
+    "explanation_full": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "fresh_search": {
+      "all_action_brier": 0.279335814,
+      "hypotheses_examined": 96,
+      "reward": 0.035,
+      "truth_agreement": 0.609375
+    },
+    "meaning": {
+      "all_action_brier": 0.234725239,
+      "hypotheses_examined": 96,
+      "reward": -0.1625,
+      "truth_agreement": 0.671875
+    },
+    "no_anchor": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "no_continuity": {
+      "all_action_brier": 0.218576326,
+      "hypotheses_examined": 45.5,
+      "reward": -0.0225,
+      "truth_agreement": 0.75
+    },
+    "no_contrast": {
+      "all_action_brier": 0.220788221,
+      "hypotheses_examined": 96,
+      "reward": -0.0075,
+      "truth_agreement": 0.734375
+    },
+    "no_identity": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "regime": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "sparse_adaptive": {
+      "all_action_brier": 0.195599327,
+      "hypotheses_examined": 96,
+      "reward": 0.1125,
+      "truth_agreement": 0.734375
+    },
+    "sparse_frozen": {
+      "all_action_brier": 0.235526234,
+      "hypotheses_examined": 96,
+      "reward": 0.045,
+      "truth_agreement": 0.703125
+    },
+    "strong_one_pass": {
+      "all_action_brier": 0.232541636,
+      "hypotheses_examined": 0,
+      "reward": -0.0875,
+      "truth_agreement": 0.5625
+    },
+    "unified": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "unified_no_anchor": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "unified_no_identity": {
+      "all_action_brier": 0.223561083,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "unified_plus_directed": {
+      "all_action_brier": 0.221410476,
+      "hypotheses_examined": 96,
+      "reward": -0.0025,
+      "truth_agreement": 0.765625
+    },
+    "unified_plus_meaning": {
+      "all_action_brier": 0.234725239,
+      "hypotheses_examined": 96,
+      "reward": -0.1625,
+      "truth_agreement": 0.671875
+    },
+    "unified_plus_sparse": {
+      "all_action_brier": 0.195599327,
+      "hypotheses_examined": 96,
+      "reward": 0.1125,
+      "truth_agreement": 0.734375
+    }
+  }
+}
