@@ -319,9 +319,9 @@ class MeaningInterpreter:
                     max(1, len(history))) if history else 0.0
         reliability = (1.0 if verified else
                        self.learner.source_reliability(source, source_context))
-        # Low trust reduces the influence of the unverified dependency report
-        # but cannot invert it into invented evidence.
-        testimony_weight = max(0.1, 2.0 * (reliability - .5))
+        # Low trust reduces confidence in the unverified dependency, but
+        # must not erase independent causal evidence about other dimensions.
+        testimony_weight = 0.5 + 0.5 * reliability
         score = (0.75 * abstraction["score"] + .25 * episodic) * testimony_weight
         ids = sorted(set(abstraction["evidence_ids"]) |
                      {event_id for event_id, _, _ in history})
