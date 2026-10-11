@@ -328,12 +328,13 @@ class TransferRun:
             if depth < 0:
                 break
             record = self.interpreter.transfer_evidence(
-                hits, state.action_features(action), review_depth=depth)
+                hits, state.action_features(action), review_depth=depth,
+                invalidated_since=state.invalidated_since)
             audits[action.label] = record
             estimate = record["score"]
-            if not record["evidence_ids"]:
-                # Only when detailed retrieval misses all sources may dormant,
-                # provenance-tagged consolidation provide a weak hypothesis.
+            if not record["evidence_ids"] and not state.invalidated_since:
+                # Offline consolidation remains a tagged hypothesis and cannot
+                # reinstate evidence invalidated by a later observed change.
                 backup = [self._consolidated_score(cue) for cue in
                           state.action_features(action) if cue.startswith("signal:")]
                 backup = [value for value in backup if value is not None]
@@ -343,26 +344,27 @@ class TransferRun:
             self.cost["interpretation_evaluations"] += record["evaluations"]
         # Every choice gets the same exploration noise in all conditions.
         rng_seed = self.seed * 991 + round_no * 97 + len(state.attempted_actions) * 13 + len(step)
-        selector = ActionSelector(self.memory, self.learner, random.Random(rng_seed))
-        decision = selector.select(state, actions, hits, transfer_scores=evidence if depth >= 0 else None)
+        selector = ActionSelector(
+            self.memory, self.learner, random.Random(rng_seed),
+            refiner=self.refiner if depth > 0 else None,
+        )
+        decision = selector.select(
+            state, actions, hits, transfer_scores=evidence if depth >= 0 else None,
+            refine=depth > 0, transfer_context={"audits": audits},
+        )
         shadow = None
         if depth > 0:
             # Genuine paired one-pass counterfactual: same evidence and RNG.
             onepass = {}
             for action in actions:
                 audit = self.interpreter.transfer_evidence(
-                    hits, state.action_features(action), review_depth=0)
+                    hits, state.action_features(action), review_depth=0,
+                    invalidated_since=state.invalidated_since)
                 onepass[action.label] = 0.85 * audit["score"]
                 self.cost["counterfactual_evaluations"] += audit["evaluations"]
             shadow = ActionSelector(self.memory, self.learner, random.Random(rng_seed)).select(
                 state, actions, hits, transfer_scores=onepass).action.label
-            self.refiner.record_transfer(
-                state, preferred=decision.action.label,
-                evidence_ids=audits[decision.action.label]["evidence_ids"],
-                alternatives=[a.label for a in actions if a != decision.action],
-                review_depth=depth,
-            )
-        latency = (perf_counter() - started) * 1000.0
+         latency = (perf_counter() - started) * 1000.0
         self.cost["decisions"] += 1
         self.cost["selection_ms"] += latency
         relevant = audits.get(decision.action.label, {})
@@ -376,6 +378,11 @@ class TransferRun:
             "contributing_categories": sum(abs(x) > 1e-12 for x in relevant.get("categories", {}).values()),
             "one_pass_counterfactual_action": shadow,
             "reflection_changed_action": bool(shadow and shadow != decision.action.label),
+            "thought": decision.thought_trace,
+            "decision_basis": (decision.thought_trace or {}).get("decision_basis"),
+            "used_evidence_ids": (decision.thought_trace or {}).get(
+                "contributing_evidence_ids", relevant.get("evidence_ids", [])),
+            "invalidated_since": dict(state.invalidated_since),
             "review_depth": max(depth, 0),
             "selection_ms": latency,
             "outcome": None,
