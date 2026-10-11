@@ -223,6 +223,15 @@ class ScalingRun(TransferRun):
             state.option_features[action.label] = cues | frozenset({
                 "goal:workshop_recovery", "action:choose", "role:workshop"})
         state.current_time = self.clock
+        alternatives = tuple(v for v in self.world.VALUES if v != dependency)
+        if len(alternatives) != 1:
+            raise ValueError("context requires exactly one alternative dependency")
+        alternate_cues = self.world.relational_cues(
+            public, dependency=alternatives[0])
+        alternate_focus = frozenset(
+            cue.replace("dependency=" + dependency,
+                        "dependency=" + alternatives[0])
+            for cue in focus)
         started = perf_counter()
         audits, scores = {}, {}
         for action in actions:
@@ -238,7 +247,9 @@ class ScalingRun(TransferRun):
             audit = self.interpreter.contextual_evidence(
                 hits, state.action_features(action), procedure=action.target,
                 source=task.source, source_context=task.context,
-                verified=verified, attention_cues=active)
+                verified=verified, attention_cues=active,
+                alternative_attention_cues=(
+                    alternate_focus if learned_focus else alternate_cues))
             audits[action.label] = audit
             scores[action.label] = .85 * audit["score"]
         # A trained one-pass control uses the same retrieval and evidence budget
@@ -259,7 +270,8 @@ class ScalingRun(TransferRun):
                 "consequence": task.consequence,
                 "source_reliability": self.learner.source_reliability(
                     task.source, task.context),
-                "inspection_cost": .25})
+                "inspection_cost": .25,
+                "revision_notice": task.revision_notice})
         elapsed = (perf_counter() - started) * 1000.0
         evaluations = sum(record.get("evaluations", 0) for record in audits.values())
         return decision, {
