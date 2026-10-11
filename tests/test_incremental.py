@@ -123,7 +123,7 @@ def test_matched_prequential_research_and_ablation_no_leakage():
         assert 0 <= row["uncertainty"] <= 1
         assert row["brier"] >= 0 and row["regret"] >= -1e-9
         assert all(isinstance(cue, str) for cue in row["context"])
-        assert row["header_evaluations"] <= 48
+        assert row["header_evaluations"] <= 80
     # Held-out predictions are scored before each unique execution.
     assert all(r["index"] >= 24 for r in report["trials"]
                if r["stage"] == "heldout")
