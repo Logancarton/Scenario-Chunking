@@ -2,9 +2,9 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "main"]
   pull_request:
-    branches: ["main", "experiment/cognitive-scaling-e8-corrected"]
+    branches: ["main", "experiment/cognitive-scaling-e8-corrected", "experiment/predictive-decision-value-e10"]
   workflow_dispatch:
 
 concurrency:
@@ -12,6 +12,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-refinement-e11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: E11 focused live-path, negative-control and subprocess restart tests
+        run: python -m pytest -q tests/test_incremental.py
+      - name: E11 independent-seed prequential replication, matched controls and ablation
+        run: |
+          python - <<'PY'
+          from scenario_chunking.incremental_experiment import write_incremental_benchmark
+          p = write_incremental_benchmark(seeds=(7, 23, 61, 101, 149))
+          assert len(p["trials"]) == 5 * 3 * 32 * 5
+          for condition, stages in p["summary"].items():
+              print("E11_CONDITION", condition, stages)
+          for row in p["paired_seed_deltas"]:
+              print("E11_PAIRED_SEED", row)
+          PY
+      - name: E11 compile and clean diff
+        run: |
+          python -m compileall -q src tests
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e11-prequential-artifacts
+          path: results-e11
+          if-no-files-found: ignore
+
   predictive-temporal-replication:
     runs-on: ubuntu-latest
     timeout-minutes: 25
