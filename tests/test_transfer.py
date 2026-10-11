@@ -165,6 +165,11 @@ def test_progressive_refiner_is_reached_before_transfer_action():
     assert all(t["thought"]["meaningfully_changed_action"] for t in verification)
     assert all(t.get("inspection_observation_ids") for t in verification)
     assert any(thread.outcomes for thread in run.refiner.threads.values())
+    assert any(
+        item["kind"] == "evidence_supported_predecessor"
+        and item.get("source_evidence_ids")
+        for item in run.learner.credit_log
+    ), "information-seeking action did not receive evidence-grounded credit"
 
 
 def test_recovery_and_deadline_success_are_reported_separately():
