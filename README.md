@@ -455,3 +455,42 @@ limitations and the next falsifiable research question. The mechanism is
 restart of learned state, expectation identities and thought versions is
 tested. This does not imply biological temporal awareness, consciousness, or
 general-purpose predictive intelligence.
+
+
+## Experiment 11 — unique-experience incremental conditional refinement (isolated research)
+
+Branch: `experiment/incremental-refinement-e11`, [draft PR #5](https://github.com/Logancarton/Scenario-Chunking/pull/5), based on E10. Production Sonara remains untouched.
+
+This is a **prequential** test: each distinct public scenario is predicted and acted upon **before** the feedback from that scenario enters the learner. A Gray-code walk varies one substantive binary factor at a time over 32 unique combinations per domain (delivery, repair, coordination), with a deliberately irrelevant marker, nine-percent potential-outcome noise, and an observed change of protocol in the final domain. Each individual policy/seed run sees each unique experience once. Five independently seeded replicas are for measurement, not repeated training passes.
+
+Existing `OutcomeLearner` contextual associations now support bounded, shrinkage-based conditional predictions and per-outcome incremental belief updates; `MeaningInterpreter` translates them into action values, `MemoryRouter` uses bounded causal-neighbor expansion, `ProgressiveRefiner` can reconsider risk, and the **single** `ActionSelector` makes the decision. Outcome events and provenance remain in `EpisodicMemory`. The experiment controller only sequences inputs and measures private, post-action counterfactual regret.
+
+The five controls are frozen learning, episodic-only (no generalized belief update), strong one-pass (same learned conditionals and expected values), full incremental risk-sensitive refinement, and full refinement with two-variable interactions ablated. Each has the same action set, matched scenario order, environment randomness and bounded retrieval budgets.
+
+**Initial corrected five-seed measured result (120 held-out, pre-outcome-scored choices per treatment):**
+
+| Treatment | Held-out mean reward | Success | Chosen-action Brier |
+| --- | ---: | ---: | ---: |
+| Frozen | −0.1367 | 44.17% | 0.2500 |
+| Episodic only | −0.1220 | 45.83% | 0.2419 |
+| Strong one-pass | −0.1653 | 43.33% | 0.2500 |
+| Full refinement | −0.1727 | 42.50% | 0.2362 |
+| No two-variable interactions | −0.1367 | 44.17% | 0.2503 |
+
+The full system's Brier score improved relative to one-pass in this particular replication, but its actual **reward and completion were worse**, including versus episodic memory alone. Relation-interaction ablation **did not establish causal benefit**; the ablation has higher reward. Full refinement accounts two nominal cognition operations per decision versus one for one-pass, with similar memory work (held-out mean 60 inspected headers and 16 detailed events). Those operation counts are harness accounting rather than precisely matched CPU FLOPs. Early-to-late changes are confounded by case ordering and changed difficulty, so they do **not** show monotonic improvement.
+
+**Scientific conclusion:** E11 demonstrates integrated single-experience updates, sourced episodic persistence, contradiction-tolerant conditional revisions, minimally varying scenarios, and subprocess restart. It **does not demonstrate improved cognitive decisions**. The key unresolved gap is reliably distinguishing causal differences from many correlated cue combinations under bandit feedback (only the selected action's outcome is observed). Minimal scenario variation alone cannot resolve that attribution problem; future work must use observed counterfactual contrasts, value-of-information, and independently held-out transfer to test whether conditional refinement becomes useful. Do not transplant this experimental mechanism into Sonara on these data.
+
+Reproduce with:
+
+```bash
+python -m pytest -q tests/test_incremental.py
+python - <<'PY'
+from scenario_chunking.incremental_experiment import write_incremental_benchmark
+p = write_incremental_benchmark(seeds=(7,23,61,101,149))
+print(p["summary"])
+print(p["paired_seed_deltas"])
+PY
+```
+
+GitHub Actions runs this experiment with the full E6–E10 historical research gate. Review the [research journal](docs/COGNITIVE_RESEARCH_JOURNAL.md) and [CI runs](https://github.com/Logancarton/Scenario-Chunking/actions) for current verification; code tests and passing CI do not establish a cognitive advantage.

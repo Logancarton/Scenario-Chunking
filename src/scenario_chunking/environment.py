@@ -690,3 +690,82 @@ class TemporalDecisionWorld:
             raise ValueError("unsupported action")
         self.reward += delta
         return delta
+
+
+class IncrementalDispatchWorld:
+    """E11 private environment. Public cues never expose its causal rule.
+
+    Each world instance permits exactly one execution. Paired conditions use a
+    deterministic potential outcome for each action (common environment draw),
+    so different learned choices never shift later scenarios' random stream.
+    """
+    def __init__(self, *, family: str, factors: dict[str, str], epoch: int,
+                 outcomes: dict[str, bool]) -> None:
+        if family not in ("delivery", "repair", "coordination"):
+            raise ValueError("unknown dispatch family")
+        self.family, self.factors, self.epoch = family, dict(factors), epoch
+        self._outcomes = dict(outcomes)
+        self.executed = False
+
+    @classmethod
+    def scenario(cls, *, seed: int, family: str, index: int,
+                 factors: dict[str, str], epoch: int):
+        """The experiment's only private causal ground truth, including noise."""
+        import hashlib
+        p, d, u, c, n = (factors[k] for k in
+                          ("person", "delay", "urgency", "capacity", "channel"))
+        if family == "delivery":
+            standard = (u == "low" or d == "short") and not (
+                n == "night" and p == "Jordan" and d == "long")
+            express = c == "open" and (n == "day" or p == "Alex")
+        elif family == "repair":
+            standard = (c == "open" or d == "short") and not (
+                u == "high" and n == "night")
+            express = (p == "Alex" or n == "day") and (
+                c == "open" or u == "low")
+        else:
+            standard = (u == "low" and d == "short") or (
+                p == "Jordan" and n == "day")
+            express = c == "open" and (u == "high" or n == "night")
+            if epoch == 1:
+                # A real but publicly signaled protocol change; historical
+                # evidence is retained yet should not override the new epoch.
+                express = c == "limited" and (u == "high" or n == "night")
+        truths = {"standard": standard, "express": express}
+        for procedure in truths:
+            digest = hashlib.sha256(
+                f"{seed}|{family}|{index}|{procedure}|noise".encode()
+            ).digest()
+            draw = int.from_bytes(digest[:8], "big") / (2 ** 64)
+            if draw < .09:
+                truths[procedure] = not truths[procedure]
+        return cls(family=family, factors=factors, epoch=epoch, outcomes=truths)
+
+    def public_cues(self) -> frozenset[str]:
+        return frozenset(
+            {f"pair:domain:{self.family}", f"pair:epoch:{self.epoch}"} |
+            {f"pair:{axis}:{value}" for axis, value in self.factors.items()})
+
+    def execute(self, action: Action) -> EnvironmentSignal:
+        if self.executed:
+            raise RuntimeError("one unique experience may be executed only once")
+        if action.kind != "route" or action.target not in self._outcomes:
+            raise ValueError("unsupported dispatch action")
+        self.executed = True
+        succeeded = self._outcomes[action.target]
+        cost = {"standard": .02, "express": .18}[action.target]
+        return EnvironmentSignal(
+            kind=EventKind.OUTCOME, truth_status=TruthStatus.OUTCOME,
+            content="Observed dispatch " + ("success" if succeeded else "failure"),
+            semantic_tags=self.public_cues() | frozenset({"action:route",
+                               "procedure:" + action.target}),
+            outcome="success" if succeeded else "failure",
+            reward=(1.0 if succeeded else -1.0) - cost,
+            confidence=1.0, informative=True,
+            metadata={"procedure": action.target,
+                      "context_cues": sorted(self.public_cues())})
+
+    def counterfactual_reward(self, procedure: str) -> float:
+        """Offline evaluator only; never delivered to the cognitive pipeline."""
+        return (1.0 if self._outcomes[procedure] else -1.0) - {
+            "standard": .02, "express": .18}[procedure]

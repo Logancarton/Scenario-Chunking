@@ -678,3 +678,30 @@ censored direct checks and source provenance are covered by E10 tests.
 Cumulative E6–E9 and full-suite completion is tracked by the GitHub
 research workflow for the branch; passing code tests must not be
 conflated with scientific support for refinement superiority.
+
+
+## Experiment 11 — incremental cognition from minimally changing, once-seen experiences (2026-10-10)
+
+**Question:** Does a persistent cognitive system learn context-dependent consequences from every distinct observation, without training again on identical scenarios, and does this produce better *new* decisions than equally informed one-pass inference or episodic case memory?
+
+**Implementation ownership:** Research branch `experiment/incremental-refinement-e11` and [draft PR #5](https://github.com/Logancarton/Scenario-Chunking/pull/5) continue E10's verified owners. `IncrementalDispatchWorld` contains the only private causal outcomes. Each world executes once. `CognitiveState` holds the currently observed context, the E10 `EpisodicMemory` stores every immutable observation/attempt/outcome and causal predecessor link, `MemoryRouter` retrieves bounded relevant chunks with one-hop causal spreading, `OutcomeLearner` updates existing contextual outcome counts and confidence from *observed* action feedback, `MeaningInterpreter` produces calibrated, provenance-bearing conditional action values, `ProgressiveRefiner` records evidence-grounded thought revisions, and `ActionSelector` remains final authority. No parallel memory, selector or learning system was introduced. Production Sonara is unchanged.
+
+**Experience design:** Three independent domain families, each with a 32-step Gray-code sequence of public person, delay, urgency, capacity and channel variables. The adjacent sequence changes exactly one of those five substantive factors. A marker changes without affecting private causal truth. A documented protocol epoch changes in one family, permitting old evidence to remain historically valid but need new applicability. The environment flips some binary potential outcomes with a deterministic nine-percent probability. Each chosen action has a deterministic paired potential outcome across comparator runs; the agent sees only the outcome for its *executed* action. Twenty-four experiences per family precede eight prequential held-out choices (each held-out choice is scored before its own feedback and may inform later distinct choices). Five random seeds are independent replications, not repeated training epochs within an agent.
+
+**Controls and causal ablation:** Frozen/no generalized learning; episodic nearest memories without generalized relationships; strongly matched one-pass conditioned on the *same learned aggregates and values*; full value-sensitive risk reconsideration; and the same full mechanism with interaction cues disabled. The ablation removes two-variable conditionals while preserving basic marginals and the episodic record, distinguishing relationship inference from mere history accumulation. All report reward, binary success, Brier, regret, bounded retrieval costs, thought-accounting operations, and context-local updates. Restart serialization is checked in a separate Python process. Explicit tests exercise observed-world uniqueness, noise/irrelevant marker invariance, signaled reversal, evidence provenance and unrelated belief nonmutation.
+
+**Five-seed research replication, held-out prequential window, 120 choices per treatment:**
+
+| Control | Mean reward | Success | Chosen-action Brier | Mean observed detail events | Mean header evaluations |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Frozen | −0.1367 | 44.17% | 0.2500 | 16 | 60 |
+| Episodic memory only | −0.1220 | 45.83% | 0.2419 | 16 | 60 |
+| One-pass conditional | −0.1653 | 43.33% | 0.2500 | 16 | 60 |
+| Full conditional refinement | −0.1727 | 42.50% | 0.2362 | 16 | 60 |
+| No two-variable interactions | −0.1367 | 44.17% | 0.2503 | 16 | 60 |
+
+These are observed results from the GitHub E11 replication job following the initial retrieval correction. A first pass incorrectly deprived the episodic baseline of causal outcome retrieval; after adding one-hop bounded spreading and better procedure-focused routing, episodic held-out mean reward improved from −0.1367 to −0.1220, without giving the generalized learner different world truth. This error and repair are part of the research record. New negative controls were added afterward and remain subject to the final CI revision.
+
+**Verdict and falsifiable weakness:** Persistent incremental updates and supported beliefs work mechanically. This is not evidence that new contexts cause better decisions. The full treatment underperforms stronger simpler controls on actual held-out reward and completion, while selected-action calibration improves modestly versus one-pass. Interaction ablation produces at least as much reward, so improved decisions **cannot** be attributed to learned two-variable relationships. A single observed outcome updates 36 overlapping cues: feature co-occurrence is not yet causal discrimination. The observational bandit policy can select which outcome it sees, generating biased training evidence. A prequential held-out window also differs from a strictly frozen model transfer test. The most valuable next test is to add conservative one-variable contrast attribution from adjacent *observed* action outcomes, with explicit residual uncertainty, and independently evaluate untrained combinations with stable action-specific counterfactual scoring. Do not patch environment answers into the learned model.
+
+**Verification and maturity:** Built, Integrated and Enabled only in the research runner. Target CI: E11 focused tests and independent-process restart, the E6–E10 cumulative suite, independent five-seed replication, compilation and diff integrity. Completed gate status is determined by the linked GitHub Actions run; a unit or restart pass alone is not a full research gate. No general-human-cognition claim, no evidence for promoting this mechanism to Sonara production.

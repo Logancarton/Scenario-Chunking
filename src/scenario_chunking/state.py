@@ -57,6 +57,9 @@ class CognitiveState:
     goal_complete: bool = False
     track_outcome_contradictions: bool = False  # Historical scorer remains a frozen comparison
 
+    # Cross-experience E11 context; events are stored in the existing memory.
+    context_cues: frozenset[str] = frozenset()
+
     def schedule_temporal(self, *, expectation_id: str, subject: str, context: str,
                           source_event_id: str, due_at: float, confidence: float) -> TimedExpectation:
         if (not expectation_id or not source_event_id or not subject or not context
@@ -180,7 +183,14 @@ class CognitiveState:
     def record_action(self, action: Action) -> None:
         self.attempted_actions.append(action.label)
 
+    def incremental_context(self, cues: frozenset[str], timestamp: float) -> None:
+        self.context_cues = cues
+        self.current_time = timestamp
+
     def candidate_actions(self) -> list[Action]:
+        if self.goal_id == "response_dispatch":
+            return [Action("route", target="standard"),
+                    Action("route", target="express")]
         actions: list[Action] = []
         if self.storage_name not in self.inspected:
             actions.append(Action("inspect_storage", target=self.storage_name))
@@ -200,6 +210,11 @@ class CognitiveState:
         return actions
 
     def action_features(self, action: Action) -> frozenset[str]:
+        if self.goal_id == "response_dispatch":
+            return self.context_cues | frozenset({
+                "goal:response_dispatch", "action:" + action.kind,
+                "procedure:" + (action.target or action.kind),
+            })
         if self.goal_id == "temporal_decisions":
             signals = {"goal:temporal_decisions", f"action:{action.kind}"}
             if action.target:
@@ -231,6 +246,14 @@ class CognitiveState:
         return frozenset(features)
 
     def retrieval_query(self) -> RetrievalQuery:
+        if self.goal_id == "response_dispatch":
+            return RetrievalQuery(
+                goal_id=self.goal_id,
+                semantic_tags=frozenset(cue for cue in self.context_cues if "&" not in cue) |
+                frozenset({"goal:response_dispatch", "procedure:standard", "procedure:express"}),
+                current_time=self.current_time,
+                desired_event_kinds=frozenset({EventKind.ACTION, EventKind.OUTCOME}),
+            )
         tags = {
             f"goal:{self.goal_id}",
             "role:locked_container",
