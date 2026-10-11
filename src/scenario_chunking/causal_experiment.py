@@ -25,6 +25,7 @@ from .environment import IncrementalDispatchWorld
 from .incremental_experiment import IncrementalRun, AXES, VALUES, FAMILIES, COSTS
 from .models import EventKind, TruthStatus
 from .state import CognitiveState, Timeline
+from .working_memory import WorkingMemoryActivation
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class Treatment:
     directed: bool = False    # prediction-error-directed review
     meaning: bool = False     # sequence/elapsed-time meaning literals
     decay: bool = False       # dormant (time-faded) threads do not anchor retrieval
+    activation: bool = False  # bounded WM prioritizes genuinely used evidence
     recruit: str = "off"      # sparse literal recruitment: off | frozen | adaptive
     search_rounds: int = 1
 
@@ -85,6 +87,7 @@ TREATMENTS: dict[str, Treatment] = {
 UNIFIED = replace(_EXPLANATION, durable=True, change=True)
 TREATMENTS.update({
     "unified": UNIFIED,
+    "unified_activation": replace(UNIFIED, activation=True),
     "unified_no_identity": replace(UNIFIED, identity=False, anchoring=False),
     "unified_no_anchor": replace(UNIFIED, anchoring=False),
     "unified_plus_directed": replace(UNIFIED, directed=True),
@@ -152,6 +155,13 @@ class CausalRun(IncrementalRun):
         self.exploration = float(exploration)
         self.clock = Timeline()
         self.gap_threshold = gap_threshold
+        # Compose with the SAME bounded SPREADING router; no parallel retrieval
+        # authority or change to historical E12 unless explicitly enabled.
+        self.working_memory = (WorkingMemoryActivation(capacity=6, focused_capacity=2)
+                               if self.treatment.activation else None)
+        if self.working_memory is not None:
+            self.router.working_memory = self.working_memory
+            self.router.activation_persistence = self.learner.activation_persistence
 
     def learner_cues(self, primitive: frozenset[str], thread, now: float) -> frozenset[str]:
         """Public cues plus interpreted chronology (only when meaning is enabled)."""
@@ -225,6 +235,21 @@ class CausalRun(IncrementalRun):
                 transfer_scores={k: v / 2 for k, v in values.items()},
                 transfer_context=context)
             chosen = decision.action
+        # Only actively selected reasoning sources count as meaningful use.
+        # A memory merely appearing in top-K does NOT refresh activation.
+        used_provenance = []
+        if self.working_memory is not None and decision is not None:
+            supporting_ids = set(predictions[chosen.label].get("evidence_ids", ()))
+            used_provenance = [
+                hit.chunk_id for hit in hits
+                if supporting_ids.intersection(self.memory.chunks[hit.chunk_id].event_ids)
+            ][:2]
+            if used_provenance:
+                self.working_memory.use(
+                    used_provenance, state.goal_id, now,
+                    known_headers={cid: self.memory.chunks[cid].semantic_tags
+                                   for cid in used_provenance},
+                    persistence=self.learner.activation_persistence)
         attempt = self._event(state, kind=EventKind.ACTION, status=TruthStatus.ATTEMPT,
                               content="Dispatch " + chosen.label, tags=cues, action=chosen)
         observed = world.execute(chosen)
@@ -233,7 +258,7 @@ class CausalRun(IncrementalRun):
                 "hits": hits, "stats": stats, "activated": activated, "anchors": anchors,
                 "attention": attention, "predictions": predictions, "decision": decision,
                 "chosen": chosen, "attempt": attempt, "observed": observed,
-                "acted_at": now, "learn": learn}
+                "acted_at": now, "learn": learn, "used_provenance": used_provenance}
 
     def deliver(self, pending: dict) -> dict:
         """Observe the attributable outcome once, then learn exactly once from it."""
@@ -273,6 +298,16 @@ class CausalRun(IncrementalRun):
                         evidence_id=outcome.event_id, contrast=diagnosis["contrast"],
                         allow_contrast=t.contrast)
                 revision = self.refiner.record_causal_revision(state, update, outcome, now=acquired)
+                # Retrieval only receives credit when the learner actually uses
+                # the retrieved contrast to seed a rule revision.
+                if self.working_memory is not None and update.get("contrast_used"):
+                    contrast = (diagnosis or {}).get("contrast") or {}
+                    cid = self.memory.event_to_chunk.get(contrast.get("evidence_id"))
+                    if cid is not None:
+                        self.working_memory.use(
+                            [cid], state.goal_id, acquired,
+                            known_headers={cid: self.memory.chunks[cid].semantic_tags},
+                            persistence=self.learner.activation_persistence)
             else:
                 update = self.learner.incremental_feedback(
                     pending["cues"], chosen.target, success=success,
@@ -309,6 +344,12 @@ class CausalRun(IncrementalRun):
                "hypotheses_examined": sum(p.get("hypotheses_examined", 0) for p in predictions.values()),
                "rules_scored": update.get("rules_scored", 0),
                "scoring_work": update.get("scoring_work", 0)}
+        if self.working_memory is not None:
+            state_snapshot = self.working_memory.snapshot(
+                state.goal_id, acquired,
+                persistence=self.learner.activation_persistence)
+            row["working_memory"] = state_snapshot
+            row["used_provenance"] = list(pending["used_provenance"])
         self.trace.append(row)
         return row
 
@@ -409,6 +450,8 @@ def _execute(job: tuple) -> list[dict]:
                 row["explanation_quality"] = quality
                 trials.append(row)
     state_bytes = len(pickle.dumps(run.learner)) + len(pickle.dumps(run.refiner))
+    if run.working_memory is not None:
+        state_bytes += len(pickle.dumps(run.working_memory))
     for row in trials:
         row["protocol"] = protocol
         row["learned_state_bytes"] = state_bytes

@@ -906,3 +906,21 @@ control at the same sparse top-K and distractor budget. Run the identical-seed
 six-scenario benchmark plus adversarial controls; publish measured detailed
 memory operations, latency, active counts, reactivations, action choices and
 negative results. Do not promote to Sonara without live behavioral evidence.
+
+
+### Unified E12 with opt-in working-memory activation (2026-10-11)
+
+**Question:** Does the bounded working-memory accessibility mechanism from merged PR #7 improve unified E12's persistent-explanation decisions, retrieval efficiency, or adaptation when the mechanisms share the same live path?
+
+**Change and ownership:** Candidate draft PR #8 (branch `experiment/e12-working-memory-integration`) adds `unified_activation` as one optional E12 treatment, never a new learning or selection subsystem. The original `CausalRun`, `ExplanationBank` / `OutcomeLearner`, `ProgressiveRefiner`, and `ActionSelector` remain the only owners. The **existing SPREADING `MemoryRouter`** keeps its top-K, candidate, and neighbor expansion budgets; opt-in working memory contributes bounded ranking priority and cue reinstatement. Only a retrieved chunk whose outcome is cited in the **selected explanation's actual prediction**, or whose observed outcome actually seeded a causal contrast, receives meaningful-use credit. Mere retrieval and repeated cueing do not count as use. The timeline is the existing global simulated E12 clock. The research gate checks source provenance, fixed-action matched training evidence, frozen held-out forks, and subprocess restart. Existing historical treatments remain off/default unchanged.
+
+**First fixed comparison:** Research gate [38180621360](https://github.com/Logancarton/Scenario-Chunking/actions/runs/38180621360), all six jobs passed, including E12 focused tests (44 passed), frozen historical results, full suite, compilation and diff gate. Five new seeds (2309, 2411, 2503, 2609, 2711) compared `unified` and `unified_activation` on **both matched-evidence and online** protocols. Frozen held-out metrics were **exactly equal for all five seeds**:
+* Matched: reward +0.0175, regret 0.2760, all-action Brier 0.22488 for both.
+* Online: reward +0.0135, regret 0.2800, all-action Brier 0.20752 for both.
+* Differences in reward, all-action Brier, and truth-agreement: **zero per seed**; explanation scoring work, retrieved detail events, and header evaluations were also equal in both protocols.
+
+**Challenges (two new seeds, 2309/2411):** Identical exception-context accuracy (1.000) and original-context retention (1.000), abrupt-change final accuracy (0.9375) and Brier (0.04073), and both long-gap families' final accuracy (1.000). The long-gap mean header count changed marginally (9111.5 to 9111.0) without improving decisions or predictions. No cognitive advantage or verified speedup is supported by these data.
+
+**Interpretation / architectural risk:** E12's held-out action values come from explanations in `ExplanationBank`, not directly from episodic retrieval scores. Changing the rank of retrieved chunks can only affect subsequent learned explanations through the limited contrast-seeding route. An exactly zero result may reflect that the WM signal receives no meaningful decision-relevant credit, or that credited WM signals alter retrieval without changing explanation or decisions. These mechanisms must be distinguished with live-path usage/contrast diagnostics before interpreting the candidate as a substantive cognitive ablation. Read-only prediction/decision equality is not proof that activation was causally tested.
+
+**Disposition:** Candidate built and wired in the research runner; opt-in treatment available but **not supported for promotion**. Keep the PR as a research draft, do not enable activation by default or transplant this into Sonara production. Follow-up must measure actual activation uses, source-linked contrasts, ranking changes and their downstream effect under precommitted matched evidence; do not tune against these reported seeds and later call them fresh.

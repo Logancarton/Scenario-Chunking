@@ -372,3 +372,92 @@ def test_original_gate_conditions_are_unchanged():
         t = TREATMENTS[mode]
         assert not (t.durable or t.change or t.directed or t.meaning or t.decay)
         assert t.recruit == "off" and t.search_rounds == 1
+
+
+def test_e12_working_memory_composes_with_spreading_without_a_second_selector():
+    """E12 keeps the same one learner, selector, router and budget owners."""
+    from scenario_chunking.models import RetrievalMode
+    base = CausalRun(7, "unified")
+    active = CausalRun(7, "unified_activation")
+    assert base.working_memory is None
+    assert base.router.working_memory is None
+    assert active.working_memory is active.router.working_memory
+    assert active.router.mode == base.router.mode == RetrievalMode.SPREADING
+    assert active.router.top_k == base.router.top_k
+    assert active.router.candidate_budget == base.router.candidate_budget
+    assert active.router.spreader is not None
+    assert active.router.spreader.budget == base.router.spreader.budget
+    assert active.router.activation_persistence is active.learner.activation_persistence
+
+
+def test_e12_working_memory_credits_only_prediction_or_used_contrast_provenance():
+    """Run the real receiving path; a top-K memory is NOT meaningful use."""
+    from scenario_chunking.causal_experiment import behavior_action
+    run = CausalRun(23, "unified_activation", exploration=.5)
+    train, _ = curriculum(23, "delivery", 0)
+    first = run.step_case(train[0], behavior=behavior_action(
+        23, "delivery", 0, train[0]["index"]))
+    assert first["working_memory"]["meaningful_uses"] == 0
+    assert not first["used_provenance"]  # fixed behavior never makes an internal choice
+
+    rows = [run.step_case(c) for c in train[1:]]
+    for row in rows:
+        # Provenance must match both the actually retrieved evidence and the
+        # explanation used for the selected action, never unrelated top-K hits.
+        assert set(row["used_provenance"]) <= set(row["retrieved_chunks"])
+        supported = set(row["predictions"][row["action"]]["evidence_ids"])
+        for cid in row["used_provenance"]:
+            assert supported.intersection(run.memory.chunks[cid].event_ids)
+        assert row["working_memory"]["active_count"] <= run.working_memory.capacity
+        assert len(row["working_memory"]["focused"]) <= run.working_memory.focused_capacity
+        assert row["detail_events"] <= 16
+        assert row["header_evaluations"] <= 80
+    # Only actual selected predictions and causal contrasts can earn uses.
+    assert run.working_memory.use_events >= sum(len(r["used_provenance"]) for r in rows)
+    assert run.working_memory.trajectories
+    assert run.working_memory.latest_time == run.clock.now
+
+
+def test_e12_activation_matched_evidence_and_frozen_forks_do_not_leak():
+    """Both learners observe the same real action outcome; heldout is read-only."""
+    from scenario_chunking.causal_experiment import behavior_action
+    baseline = CausalRun(61, "unified")
+    active = CausalRun(61, "unified_activation")
+    training, withheld = curriculum(61, "delivery", 0)
+    for case in training:
+        fixed = behavior_action(61, "delivery", 0, case["index"])
+        left = baseline.step_case(case, behavior=fixed)
+        right = active.step_case(case, behavior=fixed)
+        for field in ("action", "outcome", "outcome_event_id", "time"):
+            assert left[field] == right[field]
+        assert right["working_memory"]["active_count"] <= 6
+    before = pickle.dumps(active)
+    frozen = deepcopy(active).step_case(withheld[0], learn=False)
+    assert not frozen["update"]["updated"]
+    assert pickle.dumps(active) == before
+    assert baseline.working_memory is None
+    # The learner's explanation is not a private environment outcome.
+    assert not any("truth" in c or "counterfactual" in c
+                   for c in frozen["learner_literals"])
+
+
+def test_e12_activation_restores_live_clock_and_activation_in_fresh_process(tmp_path):
+    """Cross-process restart keeps the same learner and optional WM, then acts."""
+    run = CausalRun(101, "unified_activation", exploration=.5)
+    train, heldout = curriculum(101, "delivery", 0)
+    for case in train[:8]:
+        run.step_case(case)
+    path = tmp_path / "e12-wm.pkl"
+    path.write_bytes(pickle.dumps((run, train[8])))
+    code = (
+        "import pickle,sys;"
+        "p=pickle.load(open(sys.argv[1],'rb'));"
+        "r,c=p;"
+        "assert r.working_memory is r.router.working_memory;"
+        "before=r.clock.now;"
+        "row=r.step_case(c);"
+        "assert r.clock.now>before;"
+        "assert r.working_memory.latest_time==r.clock.now;"
+        "assert row['working_memory']['active_count']<=6"
+    )
+    subprocess.run([sys.executable, "-c", code, str(path)], check=True)
