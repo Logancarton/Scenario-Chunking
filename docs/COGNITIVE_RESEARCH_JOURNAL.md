@@ -565,3 +565,116 @@ biological subjective experience. Keep all previous negative Experiment 8
 reflection findings intact and **do not promote Experiment 9** until live
 tests pass and a held-out, information/compute-matched comparison demonstrates
 benefits over strong simpler policies.
+
+
+## Experiment 10 — predictive temporal reasoning and decision value (2026-10-10)
+
+**Scientific question:** Can learned temporal expectations and decision-value
+refinement improve subsequent actions beyond equally informed, compute-matched
+one-pass interpretation? This entry adds to the Experiment 1–9 record without
+editing older observations or negative findings.
+
+**Built and integrated in the isolated research branch:**
+`experiment/predictive-decision-value-e10`, based on
+`experiment/temporal-prediction-e9`; production Sonara is untouched.
+`OutcomeLearner` now records observed arrival durations and right-censored
+intervals by expectation identity, computes a smoothed survival distribution
+conditional on context and promise length, and weights verified source
+reliability by age. A censored direct absence is evidence of survival past
+an observed time, never an invented exact arrival or generic failure.
+EpisodicMemory retains source promises, direct observations and causally
+linked attempted-action outcomes as separate historical events.
+
+`MeaningInterpreter` interprets public information, probabilities, reports,
+dependency notices, deadlines and costs into option values. `ProgressiveRefiner`
+can revise an option only if its expected gain beats thought cost and records
+distinct sourced versions; unchanged evidence/probability bands stop version
+growth. `ActionSelector` alone executes the final ranking. The synthetic
+world hides arrival and dependency truth until legally exposed by public
+notices, inspections or actual execution feedback. Deterministic fake clocks
+and a separate interpreter process test episodic/expectation/thought
+continuity after pickle-based restart. The research runner sequences owners
+and does not implement an alternative planner or memory store.
+
+**Environment and comparisons:** Three overlapping delivery expectations,
+several contextual duration distributions, misleading reports with evolving
+reliability, deadline losses, dependency changes, sensor failures, absent
+deliveries, waiting, checking, switching, proceeding and stopping. Seeded
+six-case held-out worlds combine factors not supplied as the same training
+trajectories. Eight controls: untrained, fixed clock, learned prediction
+without refinement, learned-focus one-pass, time-triggered refinement,
+predictive-value refinement, compute-matched one-pass and repeated
+interpretation without useful new evidence. Per-decision memory candidate
+inspection is bounded to 32 headers. After discovering that an early
+implementation gave refinement a stronger final scoring override than the
+one-pass comparator, the latter was upgraded to the **same
+value-ranking authority**; the earlier exploratory 30-seed advantage is
+invalidated and not included in the inferential result.
+
+**Corrected replication, 30 independent seeds:** Each seed contains six
+held-out scenarios per treatment at each training stage (180 paired scenarios
+per stage; 4,320 treatment/scenario rows in total). In the following pairs,
+the first number is predictive-value refinement and the second is the
+compute-matched one-pass comparator. Paired reward intervals are
+normal-approximation 95% intervals from 30 seed-level differences and are
+not preregistered or a proof of generalization.
+
+| Training experiences | Mean reward full / one-pass | Mean completion full / one-pass | Full − one-pass reward [approx. 95% interval] |
+| --- | --- | --- | --- |
+| 0 | 0.3547 / 0.3593 | 0.1722 / 0.1778 | −0.00456 [−0.02929, +0.02018] |
+| 20 | 0.4712 / 0.4667 | 0.5722 / 0.5778 | +0.00450 [−0.00393, +0.01293] |
+| 100 | 0.5339 / 0.5239 | 0.6222 / 0.6278 | +0.00994 [+0.00441, +0.01547] |
+
+At 100 training experiences the full mechanism made 977 live refinement
+action changes over the 180 held-out scenarios and averaged 11.97
+accounted cognitive operations, compared with 13.46 for compute-matched
+one-pass. These totals measure the harness's counted interpretation cycles
+rather than calibrated neural/CPU FLOPs; paths differ as actions cause
+different subsequent observations. Mean inspected headers were 209.24
+versus 215.29 across trajectories, not per retrieval, and detailed events
+39.23 versus 40.37. Mean unsuccessful/unavailable inspections per trial
+were 0.0111 in both conditions. At 100 experiences the mean presence
+Brier score was 0.0687 versus 0.0716. Both shared a temporal duration
+forecast MAE of 2.002 (versus 2.375 at zero experience). Neither policy
+fabricated `verified_absent` status in the measured runs. These are
+descriptive metrics; no independent attribution analysis of action changes
+was completed.
+
+**Distraction replication:** The independent five-seed, 500-distractor
+challenge yielded full-minus-one-pass rewards +0.00150
+[−0.00671, +0.00971] after 20 training experiences and +0.01767
+[−0.00408, +0.03942] after 100, both including zero. This is too small
+a replication to establish resistance to greater memory load. Increasing
+training experiences helped both methods, so learning and the marginal
+effect of refinement must be kept conceptually separate.
+
+**Interpretation and negative findings:** 100-experience cumulative reward
+modestly favored value-refinement on this particular benchmark, with a
+seed-cluster interval excluding zero. However **goal completion was slightly
+worse at all three checkpoints** than the strong one-pass control, and
+benefits failed the small distractor replication. Therefore E10 does not
+demonstrate a general or robust superiority of additional thought. The
+strong one-pass condition uses the same computed option values and can
+choose directly without producing thought revisions. The compute-match is
+approximate because actual trajectories and operation counts differ,
+and the world has a deliberately small grammar. No human cognition,
+consciousness, generic temporal understanding, or production readiness
+may be inferred.
+
+**Next scientifically meaningful test:** Freeze learned forecasts and
+retrieved evidence per decision, randomize whether the additional
+value-refinement pass executes, and pair the exact same decision state with
+common-random-number environment continuations. Measure causal reward
+delta for *individual decisions changed by refinement*, subtract measured
+CPU/evidence-processing cost, and introduce an affordable observation with
+a delayed but decisive outcome. This discriminates whether actual revisable
+inference, versus merely improved learned forecasts or using the same
+decision values in one pass, generates net future benefit.
+
+**Verification:** E10 focused and legacy E9 temporal gates and the
+independent 30-seed replication passed in GitHub Actions at the tested
+implementation. Independent-process restart, immutable source evidence,
+censored direct checks and source provenance are covered by E10 tests.
+Cumulative E6–E9 and full-suite completion is tracked by the GitHub
+research workflow for the branch; passing code tests must not be
+conflated with scientific support for refinement superiority.

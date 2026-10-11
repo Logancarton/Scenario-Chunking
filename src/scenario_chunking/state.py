@@ -160,6 +160,16 @@ class CognitiveState:
                     self.contradicted_keys.add(key)
                     if self.candidate_key == key:
                         self.candidate_key = None
+        # Testimony changes a revisable belief, not the truth of a pending event.
+        if meta.get("source_status") == "unverified_testimony" and event_id:
+            reports = self.beliefs.setdefault("temporal_reports", {})
+            reports[str(meta.get("about", ""))] = (
+                bool(meta.get("reported_present")), str(signal.person_id),
+                event_id, float(meta.get("reported_at", self.world_time)))
+        if "dependency_change" in meta and event_id:
+            dependencies = self.beliefs.setdefault("temporal_dependencies", {})
+            dependencies[str(meta["dependency_change"])] = (
+                str(meta["required"]), event_id)
         if "inspected" in meta:
             self.inspected.add(str(meta["inspected"]))
         if "asked_person" in meta:
@@ -190,6 +200,15 @@ class CognitiveState:
         return actions
 
     def action_features(self, action: Action) -> frozenset[str]:
+        if self.goal_id == "temporal_decisions":
+            signals = {"goal:temporal_decisions", f"action:{action.kind}"}
+            if action.target:
+                signals.add(f"person:{action.target}")
+                expectation = self.timed_expectations.get("delivery:" + action.target)
+                if expectation:
+                    signals.add(f"state:{expectation.status}")
+                    signals.add(f"context:{expectation.context}")
+            return frozenset(signals)
         features = {
             f"goal:{self.goal_id}",
             f"action:{action.kind}",

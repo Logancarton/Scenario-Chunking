@@ -94,7 +94,11 @@ class ActionSelector:
             if self.refiner is None:
                 raise ValueError('no thought refiner configured')
             if transfer_scores is not None:
-                if (transfer_context or {}).get("cognitive_mode") == "temporal":
+                if (transfer_context or {}).get("cognitive_mode") == "temporal_value":
+                    scored, thought_trace = self.refiner.refine_temporal_value(
+                        state, scored, hits, context=transfer_context or {},
+                    )
+                elif (transfer_context or {}).get("cognitive_mode") == "temporal":
                     scored, thought_trace = self.refiner.refine_temporal(
                         state, scored, hits, context=transfer_context or {},
                     )
@@ -110,6 +114,18 @@ class ActionSelector:
                 scored, thought_trace = self.refiner.refine(
                     state, scored, hits, prepared=prepared,
                 )
+        if (not refine and transfer_context
+                and transfer_context.get("cognitive_mode") == "temporal_value"
+                and transfer_context.get("one_pass_decision_value")):
+            # Strong matched control: direct one-pass computation is entitled to
+            # the SAME action-value authority as a refined ranking, not a clipped
+            # score vulnerable to prior noise. No new thought version is made.
+            values = transfer_context["candidate_values"]
+            best = min(scored, key=lambda x: (-values.get(x[1].label, float("-inf")),
+                                              x[1].label))
+            scored = [(max(x[0] for x in scored) + 1.0, best[1],
+                       best[2] + ["one_pass_expected_value"], best[3])] + [
+                           x for x in scored if x[1] != best[1]]
         scored.sort(key=lambda item: (-item[0], item[1].label))
         score, action, reasons, frame = scored[0]
         predicted_success = 1.0 / (1.0 + math.exp(-score))

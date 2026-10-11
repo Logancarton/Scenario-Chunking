@@ -56,6 +56,56 @@ class OutcomeLearner:
         self.temporal_delay: dict[str, list[float]] = defaultdict(_two_zero_counts)
         self.temporal_assessed: set[str] = set()
         self.temporal_arrivals: set[str] = set()
+        # E10 sufficient statistics: a direct arrival or a right-censored interval.
+        self.temporal_samples: dict[str, dict[str, tuple[float | None, float | None, float]]] = defaultdict(dict)
+        self.temporal_sources: dict[tuple[str, str], list[tuple[float, bool]]] = defaultdict(list)
+
+    def temporal_survival(self, context: str, promised_duration: float, elapsed: float) -> float:
+        """Smoothed empirical survival with censored observations still at risk."""
+        if not math.isfinite(promised_duration) or promised_duration <= 0:
+            raise ValueError("positive finite promised duration required")
+        if not math.isfinite(elapsed) or elapsed < 0:
+            raise ValueError("finite nonnegative elapsed required")
+        events = [(0.7, True), (1.5, True), (math.inf, False)]
+        for arrival, lower, promise in self.temporal_samples[context].values():
+            if promise > 0:
+                events.append(((arrival if arrival is not None else lower) / promise,
+                               arrival is not None))
+        survival = 1.0
+        for t in sorted(set(t for t, _, in events if t <= elapsed / promised_duration)):
+            at_risk = sum(1 for when, _ in events if when >= t)
+            arrived = sum(1 for when, occurred in events if when == t and occurred)
+            if at_risk:
+                survival *= 1.0 - arrived / at_risk
+        return max(0.0, min(1.0, survival))
+
+    def temporal_arrival_probability(self, context: str, promised_duration: float,
+                                     elapsed: float, horizon: float,
+                                     *, known_absent_at: float | None = None) -> float:
+        """Probability of event within window, conditional on last direct absence."""
+        if horizon < elapsed:
+            raise ValueError("horizon precedes elapsed")
+        start = max(elapsed, known_absent_at or 0.0)
+        before = self.temporal_survival(context, promised_duration, start)
+        after = self.temporal_survival(context, promised_duration, horizon)
+        return max(0.0, min(1.0, (before - after) / max(1e-9, before)))
+
+    def verify_temporal_source(self, person: str, context: str, *,
+                               observed_at: float, correct: bool) -> None:
+        if self.enabled and math.isfinite(observed_at):
+            self.temporal_sources[(person, context)].append((observed_at, bool(correct)))
+
+    def temporal_source_reliability(self, person: str, context: str,
+                                    now: float, *, half_life: float = 40.0) -> float:
+        yes = no = 1.0
+        for when, correct in self.temporal_sources[(person, context)]:
+            weight = 0.5 ** (max(0.0, now - when) / half_life)
+            if correct:
+                yes += weight
+            else:
+                no += weight
+        return yes / (yes + no)
+
 
     def temporal_prediction(self, context: str, promised_duration: float) -> tuple[float, float]:
         """Return estimated actual duration and on-time probability.
@@ -80,6 +130,17 @@ class OutcomeLearner:
             return
         context = expectation.context
         identity = expectation.expectation_id
+        # One identity, one mutable learned sample; never edit historic evidence.
+        promised = expectation.due_at - expectation.started_at
+        if returned and arrival_at is not None:
+            self.temporal_samples[context][identity] = (
+                max(0.0, arrival_at - expectation.started_at), None, promised)
+        elif not returned and observed_at >= expectation.started_at:
+            prior = self.temporal_samples[context].get(identity)
+            if prior is None or prior[0] is None:
+                lower = max(observed_at - expectation.started_at,
+                            prior[1] if prior and prior[1] is not None else 0.0)
+                self.temporal_samples[context][identity] = (None, lower, promised)
         if identity not in self.temporal_assessed and (
                 (returned and arrival_at is not None)
                 or (not returned and observed_at >= expectation.due_at)):
