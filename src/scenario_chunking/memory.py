@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from itertools import count
+from collections import deque
+import hashlib
 
 from .models import Event, EventKind, MemoryChunk, MemoryHeader, TruthStatus
 
@@ -23,6 +25,9 @@ class EpisodicMemory:
         self.causal_links: dict[str, dict[str, tuple[str, float]]] = defaultdict(dict)
         # Per-chunk learned interpretations reference original evidence; no event is copied.
         self.layer_meanings: dict[tuple[str, str, str], object] = {}
+        # Bounded, incrementally maintained routing headers: no full-history scan.
+        self.focus_examples: dict[str, list[str]] = defaultdict(list)
+        self.focus_recent: dict[str, deque[str]] = {}
         self._event_ids = count(1)
         self._chunk_ids = count(1)
 
@@ -90,6 +95,7 @@ class EpisodicMemory:
         self.goal_index[first.goal_id].add(chunk_id)
         for tag in tags:
             self.tag_index[tag].add(chunk_id)
+            self._index_focus(tag, chunk_id)
         for person in people:
             self.person_index[person].add(chunk_id)
 
@@ -97,6 +103,41 @@ class EpisodicMemory:
             prev = self.chunks[previous]
             prev.header.next_chunk_id = chunk_id
         return chunk
+
+    def _index_focus(self, tag: str, chunk_id: str) -> None:
+        """Retain high-value and distributed historical examples plus recent evidence.
+
+        No environment answer, current goal, or action-selection authority enters
+        this index. Historical events and complete postings remain untouched.
+        """
+        recent = self.focus_recent.setdefault(tag, deque(maxlen=32))
+        recent.append(chunk_id)
+        candidates = self.focus_examples[tag]
+        candidates.append(chunk_id)
+        if len(candidates) > 64:
+            def priority(cid: str) -> tuple[float, str]:
+                chunk = self.chunks[cid]
+                quality = .4 * chunk.header.salience + .3 * chunk.header.self_relevance
+                if "outcome:success" in chunk.semantic_tags:
+                    quality += .25
+                if "source:current_protocol" in chunk.semantic_tags:
+                    quality += .3
+                # Stable coverage means low-frequency counterexamples need not
+                # disappear simply because thousands of duplicates arrive.
+                digest = hashlib.blake2b((cid + tag).encode(), digest_size=8).digest()
+                coverage = int.from_bytes(digest, "big") / (2 ** 64)
+                return quality + .3 * coverage, cid
+            candidates.sort(key=priority, reverse=True)
+            del candidates[64:]
+
+    def focused_postings(self, tag: str, count: int) -> list[str]:
+        """Bounded compact headers, balanced between representative and fresh."""
+        if count <= 0:
+            return []
+        keep = (count + 1) // 2
+        stable = self.focus_examples.get(tag, ())[:keep]
+        recent = list(reversed(self.focus_recent.get(tag, ())))[:count - keep]
+        return list(dict.fromkeys([*stable, *recent]))[:count]
 
     def activate(self, chunk_id: str, now: float, boost: float = 0.35) -> None:
         header = self.chunks[chunk_id].header
