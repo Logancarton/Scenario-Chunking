@@ -173,6 +173,7 @@ class DecisionValueRun:
             raise ValueError("unknown experimental control")
         self.world, self.mode = world, mode
         self.learner, self.memory = learner, memory
+        self.learner.begin_episode()
         self.state = CognitiveState(f"heldout:{seed}", goal_id="temporal_decisions")
         self.public = world.public_constraints()
         self.router = MemoryRouter(memory, RetrievalMode.STRUCTURAL, top_k=6)
@@ -329,6 +330,18 @@ class DecisionValueRun:
         self.total_details += stats.active_detail_events
         self.latency_ms += (perf_counter() - start) * 1000
         chosen = decision.action
+        # Attempt identities and outcomes remain in the one episodic memory.
+        attempted = _store(
+            self.memory, self.state,
+            EnvironmentSignal(
+                kind=EventKind.ACTION, truth_status=TruthStatus.ATTEMPT,
+                content="Attempted temporal action: " + chosen.label,
+                semantic_tags=frozenset({"signal:temporal", "action:" + chosen.kind}),
+                person_id=chosen.target),
+            action=chosen)
+        self.learner.register_action(
+            attempted.event_id, self.state.action_features(chosen),
+            used_evidence_ids=provenance)
         # Environment execution returns only observable feedback, not hidden times.
         delta = self.world.apply(chosen, known_dependencies={
             p: dep for p, (dep, _) in
@@ -348,7 +361,12 @@ class DecisionValueRun:
                 semantic_tags=frozenset({"signal:temporal", "action:proceed"}),
                 outcome="success" if delta > 0 else "failure",
                 reward=delta, informative=True)
-            _store(self.memory, self.state, outcome)
+            _store(self.memory, self.state, outcome,
+                   cause=attempted.event_id)
+            if delta > 0:
+                self.learner.apply_success(attempted.event_id, reward=delta)
+            else:
+                self.learner.apply_failure(attempted.event_id, reward=delta)
         row = {
             "time": now, "action": chosen.label, "reward": delta,
             "presence_prediction": interpreted["presence"],
