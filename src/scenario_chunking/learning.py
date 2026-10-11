@@ -47,7 +47,7 @@ class OutcomeLearner:
         # second memory store. Source events remain in EpisodicMemory.
         self.context_counts: dict[tuple[str, str], list[float]] = defaultdict(_two_zero_counts)
         self.context_evidence_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
-        self.focus_value: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        self.focus_value: dict[str, list[float]] = defaultdict(_two_zero_counts)
         self.inspect_value: list[float] = [1.0, 1.0]
 
     def verify_source(self, person: str, context: str, correct: bool) -> None:
