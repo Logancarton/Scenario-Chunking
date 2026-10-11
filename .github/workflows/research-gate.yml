@@ -34,7 +34,7 @@ jobs:
           assert len(trace) == 10
           assert len({row["concept_id"] for row in trace}) == 1
           assert all(row["observed_outcome_id"] and
-                     row["changed_belief"]["credit_mass"] == 1.0 and
+                     abs(row["changed_belief"]["credit_mass"] - 1.0) < 1e-9 and
                      row["next_decision"] for row in trace)
           for row in trace:
               print("E11_CONTINUITY_SEQUENCE", {
