@@ -424,61 +424,128 @@ class TransferRun:
         self.traces.append(record)
 
     def _execute_round(self, round_no: int) -> dict:
-        # Matched across treatments: halfway through evaluation, the previously
-        # effective temporal relation becomes obsolete. The notice reveals only
-        # that a revision happened, NOT the new valid option.
+        # World truth changes privately. The agent receives a fact only about
+        # invalidation, not which of the two alternatives is newly correct.
         if round_no == self.rounds // 2:
             self.world.correct["time"] = self.world.original_time
             notice = self._event(
                 f"revision-{round_no}", round_no,
                 kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
-                content="The workshop protocol has changed; previous temporal advice may be obsolete",
+                content="Observed protocol-change notice: temporal instructions may be obsolete",
                 tags={"goal:workshop_recovery", "axis:time", "revision:announced"},
-                informative=True, metadata={"change_notice": True, "changed_axis": "time"},
+                informative=True,
+                metadata={"change_notice": True, "changed_axis": "time"},
             )
             self.memory.create_chunk(
                 events=[notice], transition_reason="revision_notice",
                 self_relevance=1.0, salience=1.0,
             )
+
         scene = self.world.scene(self.seed, round_no)
         episode = f"novel-{round_no}-{scene['object']}"
         state = self._state(episode)
-        # The visible proposals are randomized neutral labels. Their correctness
-        # is never encoded in candidate labels or memory queries.
+        self.learner.begin_episode()
         rng = random.Random(self.seed * 83 + round_no * 43)
-        # The environment supplies one feasible and three infeasible plans.
-        # Every visible proposal is an opaque combination of five neutral cues,
-        # not a correctness label. The solver has no access to world.correct.
+        # The environment offers one feasible and three infeasible combinations;
+        # the policy sees only neutral labels and cue features, never the truth.
         plans = [dict(self.world.correct)]
         for error_count in (1, 2, 3):
             proposal = dict(self.world.correct)
             for axis in rng.sample(list(AXES), error_count):
-                proposal[axis] = next(token for token in self.world.options[axis]
-                                      if token != self.world.correct[axis])
+                proposal[axis] = next(
+                    token for token in self.world.options[axis]
+                    if token != self.world.correct[axis]
+                )
             plans.append(proposal)
         rng.shuffle(plans)
-        actions = []
+        proposals = []
         for idx, proposal in enumerate(plans):
             action = Action("integrate", target=f"proposal-{idx}-{scene['object']}")
-            actions.append(action)
+            proposals.append(action)
             state.option_features[action.label] = frozenset(
-                f"signal:{axis}:{token}" for axis, token in proposal.items())
-        decision, record = self._decision(state, actions, AXES, round_no=round_no, step="joint_plan")
-        chosen = plans[actions.index(decision.action)]
-        plan_correct = all(self.world.accepted(axis, token) for axis, token in chosen.items())
-        record["plan_correct"] = plan_correct
+                f"signal:{axis}:{token}" for axis, token in proposal.items()
+            )
+
+        actions = list(proposals)
+        if state.invalidated_since:
+            # All treatments receive the same optional information affordance.
+            # Only a refiner with grounded uncertainty may decide to use it.
+            for axis in sorted(state.invalidated_since):
+                inspect = Action("inspect_protocol", target=scene["object"], key_name=axis)
+                actions.append(inspect)
+
+        decision, record = self._decision(
+            state, actions, AXES, round_no=round_no, step="joint_plan")
+        action_count = 0
+        inspections = 0
+        if decision.action.kind == "inspect_protocol":
+            axis = decision.action.key_name
+            assert axis in AXES
+            observation_action = self._event(
+                episode, 0, kind=EventKind.ACTION, truth=TruthStatus.ATTEMPT,
+                content=f"Inspected current protocol for {axis}",
+                tags={"goal:workshop_recovery", f"axis:{axis}"},
+                action=decision.action,
+            )
+            # This value is exposed exclusively as an observed environment
+            # record, never as a hidden truth read by the action selector.
+            observed_token = self.world.correct[axis]
+            report = self._event(
+                episode, 0, kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
+                content=f"Current posted protocol reports {observed_token} for {axis}",
+                tags={"goal:workshop_recovery", f"axis:{axis}",
+                      f"signal:{axis}:{observed_token}", "source:current_protocol"},
+                cause=observation_action.event_id, confidence=0.96,
+                metadata={"source_status": "current_protocol",
+                          "reported_axis": axis, "reported_token": observed_token},
+            )
+            self.memory.create_chunk(
+                events=[observation_action, report],
+                transition_reason="current_protocol_observed",
+                self_relevance=1.0, salience=1.0,
+            )
+            state.record_action(decision.action)
+            state.current_time = self.clock
+            action_count += 1
+            inspections += 1
+            record["inspection_observation_ids"] = [report.event_id]
+            record["outcome"] = "information_observed"
+            self.traces.append(record)
+            decision, record = self._decision(
+                state, proposals, AXES, round_no=round_no, step="joint_plan_after_inspection")
+
+        chosen = plans[proposals.index(decision.action)]
+        initial_plan_correct = all(
+            self.world.accepted(axis, token) for axis, token in chosen.items()
+        )
+        record["plan_correct"] = initial_plan_correct
         record["surface_object"] = scene["object"]
         record["surface_person"] = scene["person"]
-        self._record_step(record, plan_correct)
-        wrong, retries, actions_count = 0, 0, 1
-        # Stepwise independent actions with causal feedback. The environment
-        # requires all five dependencies; no hidden truth is exposed to policy.
+        self._record_step(record, initial_plan_correct)
+        action_count += 1
+        state.record_action(decision.action)
+        plan_outcome = self._feedback_plan(
+            episode, decision.action, initial_plan_correct, state=state,
+            evidence_ids=record.get("used_evidence_ids", ()),
+        )
+        if decision.thought_trace is not None:
+            self.refiner.feedback(
+                state, decision,
+                outcome="success" if initial_plan_correct else "failure",
+                outcome_event_ids=(plan_outcome,),
+            )
+
+        wrong = retries = 0
         completed = {}
         for axis in scene["order"]:
-            candidates = [Action("resolve", target=token, key_name=axis)
-                          for token in self.world.options[axis]]
+            candidates = [
+                Action("resolve", target=token, key_name=axis)
+                for token in self.world.options[axis]
+            ]
             for action in candidates:
-                state.option_features[action.label] = frozenset({f"signal:{axis}:{action.target}"})
+                state.option_features[action.label] = frozenset(
+                    {f"signal:{axis}:{action.target}"}
+                )
             for attempt in range(2):
                 state.current_time = self.clock
                 selected, step_record = self._decision(
@@ -486,9 +553,17 @@ class TransferRun:
                 success = self.world.accepted(axis, selected.action.target)
                 self._record_step(step_record, success)
                 state.record_action(selected.action)
-                self._feedback(episode, actions_count, selected.action, success,
-                               source=scene["object"], person=scene["person"], state=state)
-                actions_count += 1
+                _, oid = self._feedback(
+                    episode, action_count, selected.action, success,
+                    source=scene["object"], person=scene["person"], state=state,
+                )
+                if selected.thought_trace is not None:
+                    self.refiner.feedback(
+                        state, selected,
+                        outcome="success" if success else "failure",
+                        outcome_event_ids=(oid,),
+                    )
+                action_count += 1
                 if success:
                     completed[axis] = selected.action.target
                     break
@@ -497,28 +572,36 @@ class TransferRun:
                 candidates = [a for a in candidates if a != selected.action]
                 if not candidates:
                     break
-        # Phase-2 corrective plan is derived from observed, causally confirmed
-        # subtask outcomes; no direct read of generator solution.
-        if not plan_correct and len(completed) == len(AXES):
-            plan_correct = all(
-                self.world.accepted(axis, token) for axis, token in completed.items())
-            actions_count += 1
+
+        # Observed success on each prerequisite justifies rebuilding the plan.
+        # Do not ask the generator what the answer should be.
+        recovered = len(completed) == len(AXES)
+        if not initial_plan_correct and recovered:
+            action_count += 1
             self.traces.append({
                 "round": round_no, "step": "revised_plan",
-                "action": "integrate:observed_subtasks",
-                "outcome": "success" if plan_correct else "failure",
-                "evidence_ids": [e.event_id for e in self.memory.events.values()
-                                 if e.episode_id == episode and e.kind == EventKind.OUTCOME],
+                "action": "integrate:observed_successful_subtasks",
+                "outcome": "success",
+                "evidence_ids": [
+                    e.event_id for e in self.memory.events.values()
+                    if e.episode_id == episode and e.kind == EventKind.OUTCOME
+                    and e.outcome == "success"
+                ],
             })
-        # A finite work window makes wasted probes consequential; otherwise
-        # every condition could eventually brute-force every binary decision.
-        budget = 6
+        budget = 7
+        within_budget = action_count <= budget
         return {
-            "round": round_no, "scene": scene, "initial_plan_correct": record["plan_correct"],
-            "success": plan_correct and len(completed) == len(AXES) and actions_count <= budget,
+            "round": round_no, "scene": scene,
+            "initial_plan_correct": initial_plan_correct,
+            "success": recovered and within_budget,
+            "recovered_success": recovered,
+            "within_budget": within_budget,
+            "verification_actions": inspections,
             "axes_completed": sorted(completed), "action_budget": budget,
-            "actions": actions_count, "wrong_decisions": wrong + int(not record["plan_correct"]),
-            "retries": retries, "correct_order": len(completed) == len(AXES),
+            "actions": action_count,
+            "wrong_decisions": wrong + int(not initial_plan_correct),
+            "retries": retries,
+            "correct_order": len(completed) == len(AXES),
         }
 
     def run(self) -> dict:
