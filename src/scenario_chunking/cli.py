@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .experiment import run_experiments
 from .transfer import run_transfer_experiment
+from .uncertainty import run_uncertainty_experiment
 from .models import RetrievalMode
 
 
