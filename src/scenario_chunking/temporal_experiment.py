@@ -65,6 +65,9 @@ class TemporalResearchRun:
             transition_reason="temporal_prediction" if prediction else "observed_temporal_signal",
             self_relevance=.8, salience=.7,
         )
+        if not prediction:
+            self.state.apply_signal(signal, event_id=event.event_id)
+            self.state.observed_evidence_ids.append(event.event_id)
         return event
 
     def start(self, world: ReturnTimelineWorld, episode_id: str,
@@ -76,7 +79,6 @@ class TemporalResearchRun:
             episode_id=episode_id, goal_id="temporal:" + episode_id,
         )
         source = self._store(world.promise())
-        self.state.apply_signal(world.promise(), event_id=source.event_id)
         self.expectation_id = "return:" + episode_id
         expectation = self.state.schedule_temporal(
             expectation_id=self.expectation_id, subject=world.subject,
