@@ -23,7 +23,8 @@ class ActionSelector:
         self.refiner = refiner
 
     def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit], *,
-               refine: bool = False, transfer_scores: dict[str, float] | None = None) -> SelectionDecision:
+               refine: bool = False, transfer_scores: dict[str, float] | None = None,
+               transfer_context: dict | None = None) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
         scored: list[tuple[float, Action, list[str], object]] = []
@@ -32,7 +33,13 @@ class ActionSelector:
         for action in actions:
             features = state.action_features(action)
             base = self._base_prior(action)
-            learned = self.learner.expected_utility(features)
+            # Transfer state can mark obsolete feature associations without
+            # destroying historical outcome learning or changing the memory query.
+            policy_features = (
+                state.policy_features(action) if hasattr(state, "policy_features")
+                else features
+            )
+            learned = self.learner.expected_utility(policy_features)
             frame = None
             if transfer_scores is not None:
                 memory_evidence = max(-0.45, min(0.45, transfer_scores.get(action.label, 0.0)))
@@ -69,7 +76,14 @@ class ActionSelector:
         if refine:
             if self.refiner is None:
                 raise ValueError('no thought refiner configured')
-            scored, thought_trace = self.refiner.refine(state, scored, hits, prepared=prepared)
+            if transfer_scores is not None:
+                scored, thought_trace = self.refiner.refine_transfer(
+                    state, scored, hits, context=transfer_context or {},
+                )
+            else:
+                scored, thought_trace = self.refiner.refine(
+                    state, scored, hits, prepared=prepared,
+                )
         scored.sort(key=lambda item: (-item[0], item[1].label))
         score, action, reasons, frame = scored[0]
         predicted_success = 1.0 / (1.0 + math.exp(-score))
