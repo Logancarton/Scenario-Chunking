@@ -2,12 +2,34 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "main"]
   pull_request:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected"]
   workflow_dispatch:
 
 jobs:
+  predictive-temporal-focused-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: E10 focused temporal decision tests
+        run: python -m pytest -q tests/test_decision_value.py tests/test_temporal.py
+      - name: E10 paired replication smoke and compilation
+        run: |
+          python - <<'PY'
+          from scenario_chunking.decision_value_experiment import run_decision_value_benchmark
+          p = run_decision_value_benchmark(seeds=(7, 23),
+                                           training_stages=(0, 20),
+                                           cases=(0, 1))
+          assert len(p["trials"]) == 64
+          print("E10_PAIRS", p["summary"])
+          PY
+          python -m compileall -q src tests
   temporal-focused-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
