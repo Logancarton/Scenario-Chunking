@@ -89,7 +89,7 @@ class CognitiveState:
 
     def observe_temporal(self, expectation_id: str, *, observation_id: str,
                          observed_at: float, returned: bool,
-                         direct_observation: bool) -> bool:
+                         direct_observation: bool, arrival_at: float | None = None) -> bool:
         """Only a directly observed state changes temporal truth assessment.
 
         A testimony or absence of incoming messages is never counted as an
@@ -100,6 +100,10 @@ class CognitiveState:
             raise ValueError("an observation requires identity and event time")
         if observed_at > self.world_time or observed_at < expectation.started_at:
             raise ValueError("observation lies outside the experienced clock")
+        if arrival_at is not None and (not returned or
+                not math.isfinite(arrival_at) or
+                not expectation.started_at <= arrival_at <= observed_at):
+            raise ValueError("arrival timestamp requires a witnessed, bounded arrival")
         if not direct_observation:
             return False
         if observation_id in expectation.observation_ids:
@@ -107,7 +111,7 @@ class CognitiveState:
         expectation.observation_ids.append(observation_id)
         if returned:
             expectation.status = "fulfilled"
-            expectation.arrived_at = observed_at
+            expectation.arrived_at = arrival_at
         elif observed_at >= expectation.due_at and expectation.status != "fulfilled":
             expectation.status = "verified_absent"
             expectation.last_verified_absent_at = observed_at
