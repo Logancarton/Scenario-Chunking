@@ -72,3 +72,41 @@ def test_matched_treatments_emit_inspectable_negative_controls(tmp_path):
     assert len(result["conditions"]["extended_reflection"]["round_completion"]) == 2
     assert (tmp_path / "transfer_trials.json").is_file()
     assert (tmp_path / "transfer_summary.json").is_file()
+
+
+def test_knowledge_is_retrievable_in_a_fresh_python_process(tmp_path):
+    import json
+    import pickle
+    import subprocess
+    import sys
+
+    run = TransferRun(101, "extended_reflection", rounds=1, distractors=1)
+    run.train()
+    saved = tmp_path / "memory_state.pkl"
+    saved.write_bytes(pickle.dumps((run.memory, run.learner)))
+    # Unlike an in-process pickle round-trip, this reconstructs the memory,
+    # query/router and interpretation owners in a separate Python interpreter.
+    script = """
+import json, pickle, sys
+from scenario_chunking.meaning import MeaningInterpreter
+from scenario_chunking.models import RetrievalMode, RetrievalQuery
+from scenario_chunking.retrieval import MemoryRouter
+memory, learner = pickle.load(open(sys.argv[1], "rb"))
+axis, token = sys.argv[2], sys.argv[3]
+query = RetrievalQuery("workshop_recovery", frozenset({
+    "goal:workshop_recovery", f"axis:{axis}", f"signal:{axis}:{token}",
+}), current_time=999)
+hits, _ = MemoryRouter(memory, RetrievalMode.STRUCTURAL, top_k=16).retrieve(query)
+result = MeaningInterpreter(memory, learner).transfer_evidence(
+    hits, frozenset({f"signal:{axis}:{token}"}), review_depth=3)
+print(json.dumps({"sources": result["evidence_ids"], "value": result["score"]}))
+"""
+    axis = "person"
+    token = run.world.correct[axis]
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(saved), axis, token],
+        text=True, capture_output=True, check=True,
+    )
+    answer = json.loads(result.stdout)
+    assert answer["sources"]
+    assert answer["value"] > 0
