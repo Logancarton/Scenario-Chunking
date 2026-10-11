@@ -149,3 +149,53 @@ class CognitiveState:
         if name == self.container_name:
             return "locked_container"
         return "entity"
+
+
+# Research-only state owner; validity is reconstructed from observed memory.
+@dataclass
+class TransferState:
+    episode_id: str
+    goal_id: str = "workshop_recovery"
+    current_time: float = 0.0
+    option_features: dict[str, frozenset[str]] = field(default_factory=dict)
+    attempted_actions: list[str] = field(default_factory=list)
+    excluded_axis: str | None = None
+    scramble: bool = False
+    choices: dict[str, tuple[str, str]] = field(default_factory=dict)
+    invalidated_since: dict[str, float] = field(default_factory=dict)
+
+    def policy_features(self, action: Action) -> frozenset[str]:
+        """Namespace new beliefs after an observed validity change.
+
+        Previously learned success is historical evidence, not a current
+        policy prior. New feedback gets distinct epoch-scoped associations.
+        """
+        features = set(self.action_features(action))
+        for axis, epoch in self.invalidated_since.items():
+            for cue in tuple(features):
+                prefix = f"signal:{axis}:"
+                if cue.startswith(prefix):
+                    features.remove(cue)
+                    features.add(f"epoch:{axis}:{int(epoch)}:{cue[len(prefix):]}")
+        return frozenset(features)
+
+    def action_features(self, action: Action) -> frozenset[str]:
+        cues = self.option_features.get(action.label, frozenset())
+        if self.excluded_axis:
+            cues = frozenset(x for x in cues if not x.startswith(f"signal:{self.excluded_axis}:"))
+        if self.scramble:
+            swapped = set()
+            for feature in cues:
+                parts = feature.split(":", 2)
+                if len(parts) == 3 and parts[0] == "signal" and parts[1] in self.choices:
+                    pair = self.choices[parts[1]]
+                    swapped.add(f"signal:{parts[1]}:{pair[1] if parts[2] == pair[0] else pair[0]}")
+                else:
+                    swapped.add(feature)
+            cues = frozenset(swapped)
+        return cues | frozenset({"action:choose", "role:workshop"})
+
+    def record_action(self, action: Action) -> None:
+        self.attempted_actions.append(action.label)
+
+
