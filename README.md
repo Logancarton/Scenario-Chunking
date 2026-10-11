@@ -383,3 +383,75 @@ private outcomes. Positive results require improved **observed decisions**,
 not merely a due-event log or more thought versions. This finite set of timed
 return cases does not establish cross-domain time understanding or superior
 refinement over the matched one-pass control.
+
+
+## Experiment 10 — predictive temporal decision value (research-only)
+
+Research branch: `experiment/predictive-decision-value-e10`. Draft PR:
+[Experiment 10](https://github.com/Logancarton/Scenario-Chunking/pull/4).
+This continues E9 **without changing Sonara production**. The private-truth
+multi-person world tests concurrent deliveries, misleading testimony,
+deadline expiration, temporary observation outages and a changing dependency.
+Public promises, observed signals, execution feedback and clock passage are
+the only inputs to the cognition pathway.
+
+The existing `OutcomeLearner` maintains context-conditioned temporal
+survival estimates using direct arrivals and right-censored observations.
+The `MeaningInterpreter` estimates sourced probability and expected option
+values. The `ProgressiveRefiner` compares expected decisions with thinking
+cost, preserves version provenance and prevents repeated unchanged thoughts.
+The original `ActionSelector` retains final selection authority. Execution
+feedback enters `EpisodicMemory` and the existing `OutcomeLearner`.
+
+The corrected 30-independent-seed replication uses **identical held-out worlds
+and training experiences** across eight treatments, including a strong
+compute-matched one-pass control allowed the *same final value-based action
+ranking*. Each seed evaluates six held-out environments at 0, 20 and 100
+training experiences. The reported normal-approximation intervals cluster
+paired reward differences by seed, not by individual scenario.
+
+| Experiences | Full reward | Compute-matched one-pass reward | Paired full-minus-one-pass reward (approx. 95% interval) | Full / one-pass completion |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 0.3547 | 0.3593 | −0.0046 [−0.0293, +0.0202] | 17.2% / 17.8% |
+| 20 | 0.4712 | 0.4667 | +0.0045 [−0.0039, +0.0129] | 57.2% / 57.8% |
+| 100 | 0.5339 | 0.5239 | +0.0099 [+0.0044, +0.0155] | 62.2% / 62.8% |
+
+After adding 500 irrelevant chunks, the small **five-seed** replications had
+paired reward intervals including zero: at 20 experiences +0.0015
+[−0.0067, +0.0097] and at 100 experiences +0.0177
+[−0.0041, +0.0394]. All main treatments recorded zero fabricated
+`verified_absent` failures. Forecast mean absolute error for the shared
+learned model declined from 2.375 time units at zero experience to 2.002
+at 100. More refinement versions by themselves are **not** a benefit.
+
+**Verdict:** The 100-experience synthetic reward comparison is weak positive
+evidence of decision-value gains, **not** proof that thinking longer improves
+goal completion or that gains generalize. Completion slightly trails the
+compute-matched one-pass control; the distractor replication is inconclusive.
+The one-pass computation control matches available decision values and
+per-decision repeated interpretation, but the measured operation totals are
+not exactly equal because trajectories differ. The earlier exploratory run
+that deprived one-pass reasoning of equivalent final scoring authority is
+invalid for cognitive-superiority claims and is not used here.
+
+To independently reproduce the results:
+
+```bash
+python -m pytest -q tests/test_decision_value.py tests/test_temporal.py
+python - <<'PY'
+from scenario_chunking.decision_value_experiment import write_decision_value_benchmark
+report = write_decision_value_benchmark(
+    output="results-e10", seeds=tuple(range(30)),
+    training_stages=(0, 20, 100), cases=tuple(range(6)))
+print(report["paired_comparisons"])
+PY
+```
+
+An independent GitHub Actions job additionally runs the 500-distractor
+challenge and uploads detailed per-trial records. See the append-only
+[cognitive research journal](docs/COGNITIVE_RESEARCH_JOURNAL.md) for
+limitations and the next falsifiable research question. The mechanism is
+**Built, Integrated and Enabled within the research runner**; cross-process
+restart of learned state, expectation identities and thought versions is
+tested. This does not imply biological temporal awareness, consciousness, or
+general-purpose predictive intelligence.
