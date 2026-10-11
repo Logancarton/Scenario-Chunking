@@ -59,6 +59,28 @@ class OutcomeLearner:
                 for before, after in self.prerequisite_observations if after == dependent}
 
 
+    def focus_axes(self, remaining: tuple[str, ...], completed: set[str], *,
+                   invalidated: set[str] | None = None, limit: int = 2) -> tuple[str, ...]:
+        """Prioritize unresolved categories using observed dependency evidence.
+
+        This is a learned *priority*, never a candidate-answer generator.
+        When a relationship has been invalidated, old prerequisites cannot
+        become fresh truth merely because they were learned repeatedly.
+        """
+        invalidated = invalidated or set()
+        if not remaining or limit < 1:
+            return ()
+        def priority(axis: str) -> tuple[float, str]:
+            prerequisites = self.prerequisites_for(axis)
+            blocked = sum(value for before, value in prerequisites.items()
+                          if before not in completed)
+            supported = sum(value for before, value in prerequisites.items()
+                            if before in completed)
+            if "sequence" in invalidated:
+                blocked = supported = 0.0
+            return (2.0 if axis in invalidated else 0.0) + supported - blocked, axis
+        return tuple(sorted(remaining, key=lambda axis: (-priority(axis)[0], axis))[:limit])
+
     def begin_episode(self) -> None:
         self.episode_trace = []
 
