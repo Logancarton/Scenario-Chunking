@@ -188,6 +188,9 @@ class CognitiveState:
         self.current_time = timestamp
 
     def candidate_actions(self) -> list[Action]:
+        if self.goal_id == "response_dispatch":
+            return [Action("route", target="standard"),
+                    Action("route", target="express")]
         actions: list[Action] = []
         if self.storage_name not in self.inspected:
             actions.append(Action("inspect_storage", target=self.storage_name))
