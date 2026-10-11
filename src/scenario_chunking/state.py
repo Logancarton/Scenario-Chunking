@@ -1,15 +1,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from heapq import heappop, heappush
+import math
 
 from .models import Action, EnvironmentSignal, EventKind, RetrievalQuery
+
+
+@dataclass
+class TimedExpectation:
+    """Revisable temporal belief, not an historical observation.
+
+    Due means verification is worth considering; it never asserts that the
+    expected event failed to occur. Source evidence remains in EpisodicMemory.
+    """
+    expectation_id: str
+    subject: str
+    context: str
+    source_event_id: str
+    started_at: float
+    due_at: float
+    confidence: float
+    status: str = "pending"
+    observation_ids: list[str] = field(default_factory=list)
+    arrived_at: float | None = None
+    last_verified_absent_at: float | None = None
+
+    @property
+    def due_unverified(self) -> bool:
+        return self.status == "due_unverified"
 
 
 @dataclass
 class CognitiveState:
     episode_id: str
     goal_id: str = "retrieve_object_from_locked_container"
-    current_time: float = 0.0
+    current_time: float = 0.0  # Existing processing/episode time; not wall time.
+    world_time: float = 0.0  # Externally advanced, monotonic elapsed-world clock.
+    timed_expectations: dict[str, TimedExpectation] = field(default_factory=dict)
+    due_queue: list[tuple[float, str]] = field(default_factory=list)
     container_name: str = "container"
     storage_name: str = "storage"
     work_surface_name: str = "bench"
@@ -27,6 +56,62 @@ class CognitiveState:
     beliefs: dict[str, object] = field(default_factory=dict)
     goal_complete: bool = False
     track_outcome_contradictions: bool = False  # Historical scorer remains a frozen comparison
+
+    def schedule_temporal(self, *, expectation_id: str, subject: str, context: str,
+                          source_event_id: str, due_at: float, confidence: float) -> TimedExpectation:
+        if (not expectation_id or not source_event_id or not subject or not context
+                or expectation_id in self.timed_expectations):
+            raise ValueError("a temporal expectation needs unique identity and sourced context")
+        if (not math.isfinite(due_at) or due_at <= self.world_time
+                or not math.isfinite(confidence) or not 0 <= confidence <= 1):
+            raise ValueError("deadline must be in the future with bounded confidence")
+        expectation = TimedExpectation(
+            expectation_id, subject, context, source_event_id,
+            self.world_time, due_at, confidence,
+        )
+        self.timed_expectations[expectation_id] = expectation
+        heappush(self.due_queue, (due_at, expectation_id))
+        return expectation
+
+    def advance_world_time(self, now: float) -> tuple[str, ...]:
+        """Run only due expectations; zero scans of unrelated or dormant history."""
+        if not math.isfinite(now) or now < self.world_time:
+            raise ValueError("world clock must be finite and monotonic")
+        self.world_time = now
+        due: list[str] = []
+        while self.due_queue and self.due_queue[0][0] <= now:
+            _, eid = heappop(self.due_queue)
+            expectation = self.timed_expectations[eid]
+            if expectation.status == "pending":
+                expectation.status = "due_unverified"
+                due.append(eid)
+        return tuple(due)
+
+    def observe_temporal(self, expectation_id: str, *, observation_id: str,
+                         observed_at: float, returned: bool,
+                         direct_observation: bool) -> bool:
+        """Only a directly observed state changes temporal truth assessment.
+
+        A testimony or absence of incoming messages is never counted as an
+        observed non-return. A person may still arrive after an observed delay.
+        """
+        expectation = self.timed_expectations[expectation_id]
+        if not observation_id or not math.isfinite(observed_at):
+            raise ValueError("an observation requires identity and event time")
+        if observed_at > self.world_time or observed_at < expectation.started_at:
+            raise ValueError("observation lies outside the experienced clock")
+        if not direct_observation:
+            return False
+        if observation_id in expectation.observation_ids:
+            return False
+        expectation.observation_ids.append(observation_id)
+        if returned:
+            expectation.status = "fulfilled"
+            expectation.arrived_at = observed_at
+        elif observed_at >= expectation.due_at and expectation.status != "fulfilled":
+            expectation.status = "verified_absent"
+            expectation.last_verified_absent_at = observed_at
+        return True
 
     def apply_signal(self, signal: EnvironmentSignal, *, event_id: str | None = None) -> None:
         self.current_time += 1.0
