@@ -22,9 +22,11 @@ def main() -> None:
     parser.add_argument("--uncertainty", action="store_true", help="Run Experiment 7 adaptive uncertainty challenge")
     parser.add_argument("--scaling", action="store_true", help="Run Experiment 8 cumulative learning and focused retrieval")
     parser.add_argument("--training-stages", default="20,100,500,2000,10000")
-    parser.add_argument("--memory-stages", default="100,1000,5000,20000,20000")
+    parser.add_argument("--memory-stages", default="100,1000,5000,20000", help="Independent added distractor-memory loads")
+    parser.add_argument("--complexities", default="1,2,3", help="Independent task difficulty levels")
+    parser.add_argument("--scaling-action-budget", type=int, default=3, help="Max actions per Experiment 8 held-out task")
     parser.add_argument("--scaling-conditions", default=",".join(CONDITIONS_8))
-    parser.add_argument("--candidate-budget", type=int, default=128)
+    parser.add_argument("--candidate-budget", type=int, default=48)
     parser.add_argument("--action-budget", type=int, default=9, help="Maximum actions per Experiment 7 novel task")
     parser.add_argument("--rounds", type=int, default=4, help="Novel rounds in transfer benchmark")
     parser.add_argument("--meaning", action="store_true",
@@ -39,7 +41,8 @@ def main() -> None:
             stages=tuple(int(s) for s in args.training_stages.split(",")),
             memory_targets=tuple(int(s) for s in args.memory_stages.split(",")),
             conditions=tuple(s.strip() for s in args.scaling_conditions.split(",")),
-            rounds=args.rounds, action_budget=args.action_budget,
+            complexities=tuple(int(s) for s in args.complexities.split(",")),
+            rounds=args.rounds, action_budget=args.scaling_action_budget,
             candidate_budget=args.candidate_budget)
         for stage, conditions in payload["stage_results"].items():
             for name, metrics in conditions.items():
