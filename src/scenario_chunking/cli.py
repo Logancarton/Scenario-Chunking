@@ -13,12 +13,16 @@ def main() -> None:
     parser.add_argument("--seeds", default="7,23,61,101,149", help="Comma-separated deterministic seeds")
     parser.add_argument("--modes", default="full,chunked,recency,structural,spreading", help="Comma-separated retrieval modes")
     parser.add_argument("--distractors", type=int, default=1000, help="Distractor chunks inserted before Episode 4")
+    parser.add_argument("--activation", action="store_true",
+                        help="Include experimental working-memory treatment")
     parser.add_argument("--meaning", action="store_true",
                         help="Run separate four-treatment learned meaning ablations")
     args = parser.parse_args()
 
     seeds = tuple(int(x.strip()) for x in args.seeds.split(",") if x.strip())
     modes = tuple(RetrievalMode(x.strip()) for x in args.modes.split(",") if x.strip())
+    if args.activation and RetrievalMode.ACTIVATION not in modes:
+        modes += (RetrievalMode.ACTIVATION,)
     payload = run_experiments(Path(args.output), seeds=seeds, modes=modes, distractor_count=args.distractors, include_meaning=args.meaning)
     print(f"Wrote experiment outputs to {Path(args.output).resolve()}")
     for mode, metrics in payload["aggregate"].items():

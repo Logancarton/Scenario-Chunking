@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from itertools import count
 
 from .models import Event, EventKind, MemoryChunk, MemoryHeader, TruthStatus
 
@@ -23,11 +22,13 @@ class EpisodicMemory:
         self.causal_links: dict[str, dict[str, tuple[str, float]]] = defaultdict(dict)
         # Per-chunk learned interpretations reference original evidence; no event is copied.
         self.layer_meanings: dict[tuple[str, str, str], object] = {}
-        self._event_ids = count(1)
-        self._chunk_ids = count(1)
+        self._next_event_number = 1
+        self._next_chunk_number = 1
 
     def next_event_id(self) -> str:
-        return f"e{next(self._event_ids):06d}"
+        event_id = f"e{self._next_event_number:06d}"
+        self._next_event_number += 1
+        return event_id
 
     def add_event(self, event: Event) -> None:
         if event.event_id in self.events:
@@ -51,7 +52,8 @@ class EpisodicMemory:
 
         first = events[0]
         last = events[-1]
-        chunk_id = f"c{next(self._chunk_ids):06d}"
+        chunk_id = f"c{self._next_chunk_number:06d}"
+        self._next_chunk_number += 1
         previous = self.episode_index[first.episode_id][-1] if self.episode_index[first.episode_id] else None
         tags = frozenset().union(*(event.semantic_tags for event in events))
         people = frozenset(event.person_id for event in events if event.person_id)

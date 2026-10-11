@@ -27,6 +27,20 @@ class OutcomeLearner:
         self.meaning_gains: dict[tuple[str, str, str], float] = defaultdict(float)
         self.gate_logits: dict[tuple[str, str], float] = defaultdict(float)
         self.meaning_updates: list[dict[str, object]] = []
+        # Learned accessibility remains distinct from evidence truth and validity.
+        self.activation_persistence: dict[str, float] = defaultdict(float)
+        self.activation_updates: list[dict[str, object]] = []
+
+    def learn_activation_persistence(self, source_ids: list[str], *, beneficial: bool, observed: bool) -> None:
+        """Credit only used evidence after an observed outcome or information gain."""
+        if not self.enabled or not observed:
+            return
+        for cid in dict.fromkeys(source_ids):
+            before = self.activation_persistence[cid]
+            after = max(-1.1, min(1.1, before + (0.17 if beneficial else -0.22)))
+            self.activation_persistence[cid] = after
+            self.activation_updates.append({"chunk_id": cid, "beneficial": beneficial,
+                                            "before": before, "after": after})
 
     def begin_episode(self) -> None:
         self.episode_trace = []

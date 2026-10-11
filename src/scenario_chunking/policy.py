@@ -24,6 +24,7 @@ class ActionSelector:
     def select(self, state: CognitiveState, actions: list[Action], hits: list[RetrievalHit]) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
+        self._decision_sources: dict[str, list[str]] = {}
         scored: list[tuple[float, Action, list[str], object]] = []
         interpretation_evaluations = 0
         for action in actions:
@@ -70,6 +71,7 @@ class ActionSelector:
             retrieval_hits=hits,
             meaning_frame=frame,
             interpretation_event_evaluations=interpretation_evaluations,
+            used_chunk_ids=list(self._decision_sources.get(action.label, [])),
         )
 
     @staticmethod
@@ -84,6 +86,7 @@ class ActionSelector:
 
     def _memory_evidence(self, action: Action, state: CognitiveState, hits: list[RetrievalHit]) -> float:
         evidence = 0.0
+        contributing: list[str] = []
         for hit in hits:
             events = self.memory.chunk_events(hit.chunk_id)
             matched_action = any(event.action and event.action.kind == action.kind for event in events)
@@ -93,9 +96,13 @@ class ActionSelector:
             has_failure = any(event.outcome == "failure" for event in events)
             if has_success:
                 evidence += 0.16 * hit.score
+                contributing.append(hit.chunk_id)
             if has_failure:
                 evidence -= 0.11 * hit.score
+                contributing.append(hit.chunk_id)
             if action.kind == "try_key" and action.key_name:
                 if any(f"key:{action.key_name}" in event.semantic_tags and event.outcome == "success" for event in events):
                     evidence += 0.22 * hit.score
+                    contributing.append(hit.chunk_id)
+        self._decision_sources[action.label] = list(dict.fromkeys(contributing))
         return max(-0.45, min(0.45, evidence))
