@@ -146,18 +146,35 @@ class MeaningInterpreter:
             values[f"proceed:{person}"] = proceed
             values[f"check:{person}"] = inspect
 
-        # A clock-tick consumes a time-sensitive option; waiting is NOT free.
-        if public:
-            available_future = [
-                soon[p] * float(props["payoff"])
-                - (1.0 - soon[p]) * float(props["premature_loss"])
-                for p, props in public.items()
-                if now + forecast_step <= float(props["deadline"])
-            ]
-            values["wait"] = -wait_cost + max(
-                [0.0, switch_reward] + available_future) if available_future else -wait_cost
-        else:
-            values["wait"] = -wait_cost
+        # Waiting preserves the option to act near a future arrival. Compare
+        # expected deadline reward against cumulative carrying costs; do not
+        # confuse "not arrived yet" with "will never arrive".
+        waiting_values = [0.0, switch_reward]
+        for person, props in public.items():
+            deadline = float(props["deadline"])
+            if now + forecast_step > deadline:
+                continue
+            exp = state.timed_expectations["delivery:" + person]
+            elapsed = max(0.0, now - exp.started_at)
+            elapsed_deadline = max(elapsed, deadline - exp.started_at)
+            probability = (1.0 if exp.status == "fulfilled" else
+                1.0 - self.learner.temporal_survival(
+                    exp.context, float(props["promised"]), elapsed_deadline))
+            required = deps.get(person)
+            if required and required[0] in public:
+                dep = required[0]
+                dep_props = public[dep]
+                probability *= 1.0 - self.learner.temporal_survival(
+                    dep_props["context"], float(dep_props["promised"]),
+                    elapsed_deadline)
+            expected_wait = min(max(0.0, float(props["promised"]) - now),
+                                max(0.0, deadline - now))
+            carrying_cost = wait_cost * max(forecast_step, expected_wait)
+            waiting_values.append(
+                probability * float(props["payoff"])
+                - (1.0 - probability) * float(props["premature_loss"])
+                - carrying_cost)
+        values["wait"] = max(waiting_values) - wait_cost
         return {"values": values, "presence": beliefs, "future": soon,
                 "provenance": provenance, "report_count": len(reports)}
  
