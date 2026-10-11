@@ -491,6 +491,7 @@ class ContextualWorld:
             f"pair:context={public['context']}|source={public['source']}",
             f"pair:mode={public['mode']}|material={public['material']}",
             f"pair:protocol={public['protocol_epoch']}|mode={public['mode']}",
+            f"pair:epoch={public['protocol_epoch']}|mode={public['mode']}|dependency={dep}",
             f"protocol:{public['protocol_epoch']}",
             f"pair:consequence={public['consequence']}|self={public['self_relevance']}",
             f"source:{public['source']}|context:{public['context']}",
