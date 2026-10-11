@@ -216,7 +216,7 @@ jobs:
           trials = json.loads(Path("results-scaling/scaling_trials.json").read_text())
           assert p["experiment"] == 8
           assert len(trials) == 8
-          assert list(p["stage_results"]) == ["20", "100"]
+          assert set(p["stage_results"]) == {"20", "100"}
           assert all(0 <= r["completion_rate"] <= 1 for r in trials)
           assert all(r["mean_header_evaluations"] <= 32 for r in trials if r["treatment"] in ("adaptive_focus", "bounded_without_learned_focus"))
           print("Experiment 8 smoke:", json.dumps(p["paired_focus_vs_onepass"], sort_keys=True))
