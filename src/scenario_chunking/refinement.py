@@ -307,6 +307,90 @@ class ProgressiveRefiner:
             "additional_detailed_reads": 0,
         }
 
+    def refine_contextual(self, state, scored, hits, *, context: dict):
+        """Revise the existing thought identity when verification changes evidence.
+
+        Reflection uses observed confidence, consequences and learned information
+        value. It may investigate, or stop immediately when evidence suffices.
+        The world answer and hidden dependency are never consulted here.
+        """
+        if not scored:
+            raise ValueError("cannot refine empty contextual choices")
+        thread = self.thread(state)
+        self._focus(thread, state.current_time)
+        ordered = sorted(scored, key=lambda x: (-x[0], x[1].label))
+        hypotheses = [row for row in ordered if row[1].kind == "resolve"]
+        if not hypotheses:
+            raise ValueError("no candidate procedures")
+        first = hypotheses[0]
+        second = hypotheses[1] if len(hypotheses) > 1 else hypotheses[0]
+        margin = first[0] - second[0]
+        uncertain = 1.0 / (1.0 + max(0.0, margin))
+        verified = bool(context.get("verified_dependency"))
+        consequence = float(context.get("consequence", .5))
+        reliability = float(context.get("source_reliability", .5))
+        expected_information_gain = (
+            uncertain * (1 - .5 * reliability) * consequence *
+            self.learner.observation_value()
+        )
+        inspection = next((row for row in ordered
+                           if row[1].kind == "inspect_dependency"), None)
+        should_inspect = bool(
+            inspection is not None and not verified and
+            expected_information_gain > float(context.get("inspection_cost", .25)))
+        choice = inspection if should_inspect else first
+        basis = ("verify_uncertain_dependency" if should_inspect else
+                 "stop_after_sufficient_evidence" if margin > .5 else
+                 "act_under_remaining_uncertainty")
+        evidence = tuple(sorted(set(
+            context.get("audits", {}).get(choice[1].label, {}).get(
+                "evidence_ids", ()))))
+        signature = (
+            choice[1].label, evidence, verified,
+            tuple(sorted(context.get("attention_cues", ()))),
+            basis,
+        )
+        before = len(thread.versions)
+        if not thread.versions or thread.versions[-1].signature != signature:
+            if len(thread.versions) < self.max_versions:
+                thread.versions.append(ThoughtVersion(
+                    number=len(thread.versions) + 1,
+                    preferred_action=choice[1].label,
+                    alternatives=tuple(row[1].label for row in hypotheses[:3]
+                                       if row[1].label != choice[1].label),
+                    evidence_ids=evidence,
+                    memory_chunk_ids=tuple(hit.chunk_id for hit in hits),
+                    contradictions=("unverified_dependency",) if not verified else (),
+                    uncertainty=uncertain,
+                    reason=basis, signature=signature,
+                    time=state.current_time,
+                    hypotheses=tuple({
+                        "action": row[1].label,
+                        "relative_score": round(row[0], 5),
+                    } for row in hypotheses[:4]),
+                ))
+        # Selection still occurs through ActionSelector; the refiner only
+        # changes preferences within that existing scored action set.
+        if should_inspect:
+            ordered = [
+                (max(row[0] for row in ordered) + .01, choice[1],
+                 choice[2] + ["thought=targeted_inspection"], choice[3])
+            ] + [row for row in ordered if row[1] != choice[1]]
+        return ordered, {
+            "thought_id": thread.thought_id,
+            "version": thread.versions[-1].number,
+            "changed": len(thread.versions) != before,
+            "decision_basis": basis,
+            "prediction": None,
+            "reasoning_cycles": 2 if should_inspect else 1,
+            "contributing_evidence_ids": list(evidence),
+            "expected_information_gain": expected_information_gain,
+            "attention_cues": sorted(context.get("attention_cues", ())),
+            "meaningfully_changed_action": choice[1] != ordered[0][1]
+                                      if not should_inspect else
+                                      choice[1] != first[1],
+        }
+
     def refine_transfer(self, state, scored, hits, *, context: dict):
         """Evidence-linked refinement for the same shared action-selection pathway.
 
