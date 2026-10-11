@@ -8,6 +8,51 @@ on:
   workflow_dispatch:
 
 jobs:
+  predictive-temporal-replication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: predictive-temporal-focused-gate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Experiment 10 thirty independent seed replication
+        run: |
+          python - <<'PY'
+          from scenario_chunking.decision_value_experiment import write_decision_value_benchmark
+          p = write_decision_value_benchmark(
+              output="results-e10", seeds=tuple(range(30)),
+              training_stages=(0, 20, 100), cases=tuple(range(6)))
+          assert len(p["trials"]) == 30 * 3 * 6 * 8
+          for stage, values in p["paired_comparisons"].items():
+              print("E10_PAIRED_STAGE", stage, values)
+              print("E10_FULL", stage, p["summary"][stage]["predictive_value"])
+              print("E10_COMPUTE_MATCHED", stage,
+                    p["summary"][stage]["compute_matched_one_pass"])
+          PY
+      - name: E10 five-seed distracting-memory challenge
+        run: |
+          python - <<'PY'
+          from scenario_chunking.decision_value_experiment import write_decision_value_benchmark
+          p = write_decision_value_benchmark(
+              output="results-e10-distractors", seeds=(3, 7, 23, 61, 101),
+              training_stages=(20, 100), cases=tuple(range(6)),
+              distractors=500)
+          assert len(p["trials"]) == 5 * 2 * 6 * 8
+          for stage, values in p["paired_comparisons"].items():
+              print("E10_DISTRACTOR_PAIRED_STAGE", stage, values)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e10-replication-artifacts
+          path: |
+            results-e10
+            results-e10-distractors
+          if-no-files-found: ignore
+
   predictive-temporal-focused-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 12
