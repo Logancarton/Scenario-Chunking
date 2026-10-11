@@ -298,6 +298,22 @@ class TransferRun:
         self.traces.append(record)
 
     def _execute_round(self, round_no: int) -> dict:
+        # Matched across treatments: halfway through evaluation, the previously
+        # effective temporal relation becomes obsolete. The notice reveals only
+        # that a revision happened, NOT the new valid option.
+        if round_no == self.rounds // 2:
+            self.world.correct["time"] = self.world.original_time
+            notice = self._event(
+                f"revision-{round_no}", round_no,
+                kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
+                content="The workshop protocol has changed; previous temporal advice may be obsolete",
+                tags={"goal:workshop_recovery", "axis:time", "revision:announced"},
+                informative=True, metadata={"change_notice": True},
+            )
+            self.memory.create_chunk(
+                events=[notice], transition_reason="revision_notice",
+                self_relevance=1.0, salience=1.0,
+            )
         scene = self.world.scene(self.seed, round_no)
         episode = f"novel-{round_no}-{scene['object']}"
         state = self._state(episode)
@@ -370,7 +386,7 @@ class TransferRun:
             })
         # A finite work window makes wasted probes consequential; otherwise
         # every condition could eventually brute-force every binary decision.
-        budget = 8
+        budget = 6
         return {
             "round": round_no, "scene": scene, "initial_plan_correct": record["plan_correct"],
             "success": plan_correct and len(completed) == len(AXES) and actions_count <= budget,
