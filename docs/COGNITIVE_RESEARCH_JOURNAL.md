@@ -366,3 +366,18 @@ Signal-cue ablation completion with extended reflection: Self 25%, Salience 0%, 
 - The original Experiment 7 tests and controls remain essential. Negative findings should be retained rather than adjusting task difficulty to improve the score.
 
 **Research decision rule:** Look for paired gains in goal completion *and* lower irrelevant processing per correct decision, not higher episodic recall alone. Do not claim cognitive maturity from smoke compilation or passing infrastructure tests.
+
+### Experiment 8 — first verified smoke (October 10, 2026, Phoenix)
+
+Run: https://github.com/Logancarton/Scenario-Chunking/actions/runs/38102511995
+
+**Verification:** Seven focused behavioral tests passed (including separate-process continuation); two-stage executable scaling gate, payload assertions, compilation and diff check passed. This is a **one-seed, two-round-per-stage smoke**, *not* the 30-seed research verdict. Legacy full regression gate is separate.
+
+| Experience stage | Untrained completion | Strong one-pass | Adaptive learned focus | Bounded retrieval without learned focus |
+| --- | ---: | ---: | ---: | ---: |
+| 20 | 0% | 0% | 0% | 0% |
+| 100 | 0% | 0% | 0% | 50% |
+
+At 100 experience steps, adaptive learned focus averaged 32 evaluated headers/decision versus 232 for the larger-access one-pass comparator. Both capped treatments were limited to 32 candidate headers. However learned focus finished **0/2** tasks; the otherwise bounded condition without category selection finished **1/2**. Thus **the candidate-budget mechanism reduced header processing, but learned category prioritization did not show better reasoning** in the smoke test and may be discarding important alternatives. No inference of statistical significance is warranted.
+
+**Priority for next research iteration:** separate category-focus quality from purely reducing the candidate-header budget. Add paired exact information/compute controls and harder novel causal combinations, then evaluate learning curves over 30 seeds if computationally practical. Do not increase reflection merely to improve completion.
