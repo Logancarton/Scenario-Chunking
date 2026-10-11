@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "main"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -221,6 +221,21 @@ jobs:
           assert all(r["mean_header_evaluations"] <= 32 for r in trials if r["treatment"] != "larger_retrieval")
           print("Experiment 8 smoke:", json.dumps(p["paired_focus_vs_onepass"], sort_keys=True))
           PY
+      - name: Experiment 9 focused temporal cognition tests
+        run: python -m pytest -q tests/test_temporal.py
+      - name: Experiment 9 paired temporal research gate
+        run: |
+          python - <<'PY'
+          from scenario_chunking.temporal_experiment import write_temporal_benchmark
+          report = write_temporal_benchmark()
+          assert report["experiment"] == 9
+          assert len(report["trials"]) == 100
+          assert report["summary"]["temporal"]["due_wakes"] == 25
+          assert report["summary"]["memory_only"]["due_wakes"] == 0
+          assert not any(row["false_failure_claim"] for row in report["trials"])
+          for mode, metrics in report["summary"].items():
+              print("E9", mode, metrics)
+          PY
       - name: Upload measured results
         if: always()
         uses: actions/upload-artifact@v4
@@ -232,4 +247,5 @@ jobs:
             results-transfer/
             results-uncertainty/
             results-scaling/
+            results-temporal/
           if-no-files-found: ignore
