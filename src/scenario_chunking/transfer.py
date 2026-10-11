@@ -66,7 +66,7 @@ class TransferRun:
 
     def _feedback(self, episode: str, step: int, action: Action, accepted: bool, *,
                   source: str, historical: bool = False, person: str | None = None,
-                  state: TransferState | None = None) -> tuple[str, str]:
+                  state: TransferState | None = None, used_evidence_ids=()) -> tuple[str, str]:
         axis, token = action.key_name, action.target
         assert axis in AXES and token is not None
         tags = {"goal:workshop_recovery", f"axis:{axis}", f"signal:{axis}:{token}"}
@@ -77,7 +77,9 @@ class TransferRun:
             features = frozenset({f"signal:{axis}:{token}", "action:choose", "role:workshop"})
         else:
             features = state.policy_features(action)
-        self.learner.register_action(attempt.event_id, features)
+        self.learner.register_action(
+            attempt.event_id, features, used_evidence_ids=used_evidence_ids,
+        )
         result = self._event(
             episode, step, kind=EventKind.OUTCOME, truth=TruthStatus.OUTCOME,
             content=f"Observed {source} outcome for {axis}",
@@ -423,6 +425,19 @@ class TransferRun:
                 transition_reason="current_protocol_observed",
                 self_relevance=1.0, salience=1.0,
             )
+            self.learner.register_action(
+                observation_action.event_id,
+                state.policy_features(decision.action),
+            )
+            self.learner.mark_informative(
+                observation_action.event_id,
+                produced_evidence_ids=(report.event_id,),
+            )
+            if decision.thought_trace is not None:
+                self.refiner.feedback(
+                    state, decision, outcome=None,
+                    outcome_event_ids=(report.event_id,),
+                )
             state.record_action(decision.action)
             state.current_time = self.clock
             action_count += 1
@@ -476,6 +491,7 @@ class TransferRun:
                 _, oid = self._feedback(
                     episode, action_count, selected.action, success,
                     source=scene["object"], person=scene["person"], state=state,
+                    used_evidence_ids=step_record.get("used_evidence_ids", ()),
                 )
                 if selected.thought_trace is not None:
                     self.refiner.feedback(
