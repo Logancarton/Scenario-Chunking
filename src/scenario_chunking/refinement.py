@@ -307,6 +307,92 @@ class ProgressiveRefiner:
             "additional_detailed_reads": 0,
         }
 
+    def refine_transfer(self, state, scored, hits, *, context: dict):
+        """Evidence-linked refinement for the same shared action-selection pathway.
+
+        Stage one is the current policy ranking. Stage two checks whether a
+        previously trusted axis has been invalidated without new applicable
+        evidence. It can choose a genuine information-seeking action; it never
+        guesses which candidate is correct from the invalidation alone.
+        """
+        if not scored:
+            raise ValueError("transfer refinement needs candidate actions")
+        thread = self.thread(state)
+        self._focus(thread, state.current_time)
+        direct = sorted(scored, key=lambda row: (-row[0], row[1].label))
+        decisions = context.get("audits", {})
+        invalidated = set(getattr(state, "invalidated_since", {}))
+        validity_unresolved = []
+        for axis in sorted(invalidated):
+            applicable = any(
+                record.get("provenance", {}).get(cue)
+                for record in decisions.values()
+                for cue in record.get("categories", {})
+                if cue.startswith(f"signal:{axis}:")
+            )
+            if not applicable:
+                validity_unresolved.append(axis)
+        # Inspection is a candidate affordance exposed to ALL conditions.
+        # The refiner may activate it only when evidence shows the old
+        # relationship has become inapplicable and current truth is unknown.
+        investigate = next(
+            (row for row in direct if row[1].kind == "inspect_protocol"
+             and row[1].key_name in validity_unresolved), None
+        )
+        reason = "evidence_already_sufficient"
+        ordered = list(direct)
+        if investigate is not None:
+            reason = "verify_invalidated_relationship"
+            ordered.remove(investigate)
+            ordered.insert(0, (direct[0][0] + 0.001, investigate[1],
+                               investigate[2] + [f"thought={reason}"], investigate[3]))
+        preferred = ordered[0][1].label
+        selected_evidence = tuple(sorted(set(
+            decisions.get(preferred, {}).get("evidence_ids", ())
+        )))
+        evidence_signature = tuple(sorted(
+            (label, tuple(sorted(record.get("evidence_ids", ()))),
+             tuple(sorted(record.get("categories", {}).items())))
+            for label, record in decisions.items()
+        ))
+        signature = (state.goal_id, preferred, tuple(validity_unresolved), evidence_signature)
+        before = len(thread.versions)
+        if not thread.versions:
+            thread.versions.append(ThoughtVersion(
+                number=1, preferred_action=direct[0][1].label,
+                alternatives=tuple(row[1].label for row in direct[1:4]),
+                evidence_ids=(), memory_chunk_ids=(),
+                contradictions=tuple(validity_unresolved),
+                uncertainty=self._uncertainty(direct),
+                reason="initial_policy_hypothesis", signature=("initial",),
+                time=state.current_time,
+            ))
+        if (thread.versions[-1].signature != signature and
+                len(thread.versions) < self.max_versions):
+            thread.versions.append(ThoughtVersion(
+                number=len(thread.versions) + 1, preferred_action=preferred,
+                alternatives=tuple(row[1].label for row in ordered[1:4]),
+                evidence_ids=selected_evidence,
+                memory_chunk_ids=tuple(sorted(hit.chunk_id for hit in hits)),
+                contradictions=tuple(validity_unresolved),
+                uncertainty=self._uncertainty(ordered),
+                reason=reason, signature=signature,
+                time=state.current_time,
+            ))
+        return ordered, {
+            "thought_id": thread.thought_id,
+            "version": thread.versions[-1].number,
+            "activation_state": thread.status_at(state.current_time),
+            "changed": len(thread.versions) != before,
+            "reasoning_cycles": 2 if invalidated else 1,
+            "decision_basis": reason,
+            "current": thread.versions[-1].trace(),
+            "contributing_evidence_ids": list(selected_evidence),
+            "invalidated_axes_without_current_evidence": validity_unresolved,
+            "meaningfully_changed_action": preferred != direct[0][1].label,
+            "additional_detailed_reads": 0,
+        }
+
     def record_transfer(self, state, *, preferred: str, evidence_ids,
                         alternatives=(), review_depth: int = 1) -> dict:
         """Keep one evidence-grounded thought identity across transfer decisions.
