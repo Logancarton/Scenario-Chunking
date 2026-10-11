@@ -297,26 +297,49 @@ The active pathway reuses `MemoryRouter`, `EpisodicMemory`, `MeaningInterpreter`
 
 **Important limitations:** the underlying role tokens remain shared between training and transfer; these are not genuinely held-out causal *combinations*. Blocked-predecessor feedback explicitly names a prerequisite. The strong one-pass baseline is measured, but not strictly compute-matched with iterative reflection. Serialization restoration is verified in-process by the runner and independently in a focused subprocess test. A positive cognitive benefit must come from observed benchmark metrics, not from test passage or architecture presence.
 
-## Experiment 8 — cumulative experience and bounded cognitive focus
+## Experiment 8 — corrected contextual scaling research
 
-The independent research branch `experiment/cognitive-scaling-e8` adds a cumulative-training challenge **without changing Sonara production**. It keeps one episodic memory/learner across checkpoints while testing learned category priority and optional bounded, context-linked retrieval against the Experiment 7 selectors.
+Research branch: \`experiment/cognitive-scaling-e8-corrected\`. No Sonara production changes.
 
-Quick gate (one seed, small scales):
+The earlier Experiment 8 implementation is superseded for causal inference:
+it separated five contextual dimensions into independent symbol puzzles, tested
+different problems at successive experience stages, and restricted retrieval
+with fixed heuristics. Those outcomes must NOT be interpreted as tests of
+cognitive scaling.
 
-```bash
-scenario-chunking --scaling --output results-scaling --seeds 7 --rounds 2 \
-  --training-stages 20,100 --memory-stages 100,500 \
+The corrected experiment tests single decisions conditioned jointly on
+self-relevance, consequence/salience, time/protocol epoch, procedural dependencies,
+object properties, source identity and fallible testimony. All four held-out
+procedural outcomes are represented. Training experiences arise from actions and
+observed feedback; learned conditional relations and source reliability remain
+revisable. A bounded cue index retrieves evidence through the existing
+EpisodicMemory and MemoryRouter; MeaningInterpreter, OutcomeLearner,
+ActionSelector, ProgressiveRefiner and the live environment feedback path remain
+the cognitive owners. Reflection can make targeted inspection choices or stop
+when evidence is sufficient. Task-state never receives the private answer.
+
+Most importantly, a factorial evaluation holds **the exact held-out task bank
+fixed** across all experience checkpoints and independently varies added
+distractor-memory load and task complexity. Each treatment sees the same training
+interventions and observations (except the untrained control). Decision outcomes,
+causal recall/precision, missed memories, computation, attention and evidence
+provenance are reported separately. The evaluation state is forked and never
+teaches the continuing training state.
+
+Verified smoke command:
+
+\`\`\`bash
+scenario-chunking --scaling --output results-scaling-corrected \
+  --seeds 7,23 --rounds 4 --training-stages 20,100,500 \
+  --memory-stages 50,100 --complexities 1,3 \
   --scaling-conditions untrained_structural,strong_one_pass,adaptive_focus,bounded_without_learned_focus \
-  --candidate-budget 32
-```
+  --scaling-action-budget 3 --candidate-budget 32
+\`\`\`
 
-Full configured study (substantial memory and compute demand):
+Outputs: \`scaling_trials.json\`, \`scaling_summary.json\`.
 
-```bash
-scenario-chunking --scaling --output results-scaling-full \
-  --seeds $(seq -s, 1 30) --rounds 4 \
-  --training-stages 20,100,500,2000,10000 \
-  --memory-stages 100,1000,5000,20000,20000
-```
-
-Outputs: `scaling_summary.json` and `scaling_trials.json`, with stage-specific seed results, memory counts, active detail reads, bounded candidate-header evaluations, decision outcomes and paired intervals. **This study is not yet proof of superior general reasoning**: the candidate worlds retain Experiment 7's five-category grammar, compute is measured but not strictly matched, and a learned reflection stopping policy remains future work. See `docs/COGNITIVE_RESEARCH_JOURNAL.md`.
+A full 30-seed, 10,000-experience, 20,000-distractor study is available through
+the CLI but has **not yet been verified** and may require splitting memory
+conditions into separate controlled jobs. The smoke does not establish a
+reliable cognitive advantage, strictly equal computational budgets, or
+general reasoning beyond the synthetic causal world. See the research journal.
