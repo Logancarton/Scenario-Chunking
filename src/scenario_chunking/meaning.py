@@ -278,3 +278,58 @@ class MeaningInterpreter:
         weights = {axis: math.exp(logit - pivot) / normalizer for axis, logit in logits.items()}
         integrated = sum(weights[m.axis] * m.value for m in meanings)
         return MeaningFrame(context, action.kind, tuple(meanings), weights, integrated, len(sources), examined_event_records)
+
+    def uncertainty_evidence(self, hits, features: frozenset[str], *,
+                             context: str, invalidated_since: dict[str, float] | None = None,
+                             review_depth: int = 0) -> dict:
+        """Ground fallible reports against source calibration and causal history.
+
+        A testimony is an observation of a claim, never an observed success.
+        Invalidated causal associations remain historically true but cease to
+        govern the current epoch. Processing is restricted to retrieved chunks.
+        """
+        base = self.transfer_evidence(
+            hits, features, review_depth=review_depth,
+            invalidated_since=invalidated_since)
+        invalidated_since = invalidated_since or {}
+        reports = {}
+        checked = 0
+        conflicts = set()
+        report_axis_tokens = {}
+        for hit in hits:
+            for event in self.memory.chunk_events(hit.chunk_id):
+                checked += 1
+                if event.kind != EventKind.OBSERVATION:
+                    continue
+                meta = event.metadata
+                if meta.get("source_status") != "testimony" or meta.get("context") != context:
+                    continue
+                axis, token, source = (meta.get("reported_axis"),
+                                       meta.get("reported_token"), meta.get("source_name"))
+                if not all(isinstance(x, str) for x in (axis, token, source)):
+                    continue
+                if event.occurrence_time < invalidated_since.get(axis, float("-inf")):
+                    continue
+                cue = f"signal:{axis}:{token}"
+                report_axis_tokens.setdefault(axis, set()).add(token)
+                reliability = self.learner.source_reliability(source, context)
+                # Values at or below chance can count as contradictory, not
+                # corroborating; the confidence comes from verified history.
+                weight = max(-0.5, min(0.5, reliability - 0.5)) * 2.0
+                if cue in features:
+                    reports[event.event_id] = (axis, weight, source, reliability)
+        for axis, tokens in report_axis_tokens.items():
+            if len(tokens) > 1:
+                conflicts.add(axis)
+        report_score = sum(value[1] for value in reports.values()) / max(1, len(reports))
+        has_causal = bool(base["evidence_ids"])
+        score = max(-1.0, min(1.0,
+                             0.85 * base["score"] + 0.38 * report_score))
+        evidence_ids = sorted(set(base["evidence_ids"]) | set(reports))
+        return {**base, "score": score, "causal_score": base["score"],
+                "report_score": report_score, "evidence_ids": evidence_ids,
+                "report_evidence_ids": sorted(reports),
+                "contradictory_axes": sorted(conflicts),
+                "source_reliability": {v[2]: v[3] for v in reports.values()},
+                "has_causal_evidence": has_causal,
+                "evaluations": base["evaluations"] + checked}
