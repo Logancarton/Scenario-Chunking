@@ -1,8 +1,8 @@
-"""Experiment 8: cumulative learning versus sparse focus and memory interference.
+"""Experiment 8: controlled transfer from accumulating contextual experiences.
 
-Research orchestration only. The existing environment, episodic memory, router,
-learner, interpreter, selector and refiner make every live decision. Held-out
-private truth is consulted solely by the environment and metric calculation.
+An orchestration harness, not a second selector/runtime/learner. Hidden world
+outcomes never enter cognitive state except through executed actions and
+inspection observations. Tests are frozen across training checkpoints.
 """
 from __future__ import annotations
 
@@ -12,12 +12,14 @@ import pickle
 import random
 import statistics
 from pathlib import Path
+from time import perf_counter
 
-from .environment import AXES, UncertaintyWorld
-from .models import Action, EventKind, TruthStatus
+from .environment import ContextualWorld
+from .models import Action, EventKind, TruthStatus, RetrievalQuery
+from .state import TransferState
+from .policy import ActionSelector
 from .uncertainty import UncertaintyRun
 
-# Exactly the same training observations are replayed across trained treatments.
 CONDITIONS_8 = {
     "untrained_structural": "untrained_structural",
     "trained_association": "trained_structural",
@@ -31,290 +33,439 @@ CONDITIONS_8 = {
     "shuffled_evidence": "shuffled_evidence",
 }
 DEFAULT_STAGES = (20, 100, 500, 2000, 10000)
-DEFAULT_MEMORY = (100, 1000, 5000, 20000, 20000)
+DEFAULT_MEMORY = (100, 1000, 5000, 20000)
+DEFAULT_COMPLEXITIES = (1, 2, 3)
 
 
 class ScalingRun(UncertaintyRun):
-    """One persistent learner and one persistent memory per seed/treatment."""
+    """The existing cognitive owners operate in one fully contextual task."""
 
     def __init__(self, seed: int, treatment: str, *, rounds: int = 4,
-                 action_budget: int = 9, candidate_budget: int = 128) -> None:
+                 action_budget: int = 3, candidate_budget: int = 48) -> None:
         if treatment not in CONDITIONS_8:
-            raise ValueError(f"unknown scaling treatment {treatment}")
+            raise ValueError(f"unknown Experiment 8 treatment: {treatment}")
+        if candidate_budget < 8:
+            raise ValueError("candidate budget must allow causal comparisons")
         super().__init__(seed, CONDITIONS_8[treatment], rounds=rounds,
                          distractors=0, action_budget=action_budget)
+        self.world = ContextualWorld(seed)
         self.treatment = treatment
         self.experiences = 0
+        self.training_observations = []
         self.candidate_budget = candidate_budget
-        self.training_observations: list[dict] = []
-        self._last_retrieval_stats = None
-        self._focus_axes = tuple(AXES)
-        if treatment in ("adaptive_focus", "bounded_without_learned_focus"):
-            self.router.candidate_budget = candidate_budget
+        self.router.top_k = min(16, candidate_budget)
+        self.router.candidate_budget = (
+            min(4 * candidate_budget, 256) if treatment == "larger_retrieval"
+            else candidate_budget)
+        # Identical action affordances, training data and public contexts across
+        # all trained treatments. Only the cognition mechanism is ablated.
+
+    def _attempt(self, task, procedure: str, *, episode: str, step: int,
+                 dependency: str, context_cues: frozenset[str],
+                 used_evidence_ids=()) -> tuple[bool, str]:
+        """A real executed action produces the only supervised causal target."""
+        action = Action("resolve", procedure, "procedure")
+        tags = set(context_cues) | {"goal:workshop_recovery", "action:choose"}
+        event = self._event(
+            episode, step, kind=EventKind.ACTION, truth=TruthStatus.ATTEMPT,
+            content=f"Attempted procedure {procedure}", tags=tags,
+            action=action, person=task.source,
+            metadata={"reported_dependency": dependency})
+        accepted = self.world.outcome(task, procedure)
+        outcome = self._event(
+            episode, step, kind=EventKind.OUTCOME, truth=TruthStatus.OUTCOME,
+            content=f"Instrument observed procedure {'success' if accepted else 'failure'}",
+            tags=tags | {f"outcome:{'success' if accepted else 'failure'}"},
+            outcome="success" if accepted else "failure",
+            cause=event.event_id,
+            metadata={"tested_procedure": procedure})
+        self.memory.create_chunk(
+            events=[event, outcome], transition_reason="observed_contextual_feedback",
+            self_relevance=task.self_relevance, salience=task.consequence)
+        self.learner.register_action(event.event_id, frozenset(tags),
+                                     used_evidence_ids=used_evidence_ids)
+        # Keep the existing action-credit owner active; contextual statistics
+        # are an additional interpretation of that very same observed outcome.
+        if accepted:
+            self.learner.apply_success(event.event_id)
+        else:
+            self.learner.apply_failure(event.event_id, -1.0)
+        self.learner.learn_context_outcome(
+            context_cues, procedure, accepted, evidence_id=outcome.event_id)
+        return accepted, outcome.event_id
 
     def add_experiences(self, target: int) -> None:
-        """Generate observed, feedback-bearing trials without resetting knowledge."""
         if target < self.experiences:
-            raise ValueError("training checkpoints must increase")
-        rng = random.Random(self.seed * 911 + 19)
-        # Advance deterministic draws to maintain identical data at all checkpoints.
-        for trial in range(target):
-            axis = AXES[trial % len(AXES)]
-            claim = self.world.reports(self.seed, trial, axis)[trial % 3]
-            candidate = (claim["token"] if trial % 4 != 0
-                         else self.world.options[axis][rng.randrange(4)])
-            if trial < self.experiences:
-                continue
-            if trial == 500 and not self.world.revised:
-                # The historical protocol changes: a notice is observable, but
-                # the new dependency graph is not handed to a cognitive owner.
-                self.world.revise()
+            raise ValueError("experience checkpoints cannot rewind")
+        for index in range(self.experiences, target):
+            task = self.world.task(index, heldout=False, complexity=2)
+            reported = task.public()
+            # A subset of probes chooses costly observation before acting.
+            # No correct action is ever supplied to the learner or policy.
+            inspected = (index % 4 == 0)
+            dependency = task.reported_dependency
+            if inspected:
+                observation = self.world.inspect_dependency(task)
+                dependency = observation["dependency"]
                 if self.treatment != "untrained_structural":
-                    notice = self._event(
-                        f"training-revision-{trial}", trial,
-                        kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
-                        content="Maintenance bulletin: procedure and sequence changed",
-                        tags={"goal:workshop_recovery", "axis:time",
-                              "axis:sequence", "revision:announced"},
-                        metadata={"change_notice": True, "changed_axis": "sequence"},
-                    )
-                    self.memory.create_chunk(
-                        events=[notice], transition_reason="training_change_notice",
-                        self_relevance=1.0, salience=1.0)
-            accepted = self.world.accepted(axis, candidate)
-            observed_kind = "success" if accepted else "failure"
+                    self.learner.verify_source(
+                        task.source, task.context,
+                        dependency == task.reported_dependency)
+                    self.learner.learn_observation_value(
+                        dependency != task.reported_dependency)
+            cues = self.world.relational_cues(reported, dependency=dependency)
+            procedure = self.world.PROCEDURES[(index * 13 + self.seed) % 4]
             if self.treatment != "untrained_structural":
                 self.learner.begin_episode()
-                # Dependency probes are causal observations; a blocked action
-                # cannot imply the chosen symbol was incorrect.
-                status, missing = self.world.attempt(axis, candidate, set()) if trial % 9 == 0 else (None, None)
-                if status == "blocked" and missing is not None:
-                    attempt = self._event(
-                        f"scale-training-{trial}", trial, kind=EventKind.ACTION,
-                        truth=TruthStatus.ATTEMPT,
-                        content=f"Attempted {axis} before prerequisites",
-                        tags={"goal:workshop_recovery", f"axis:{axis}"},
-                        action=Action("resolve", candidate, axis))
-                    result = self._event(
-                        f"scale-training-{trial}", trial, kind=EventKind.OUTCOME,
-                        truth=TruthStatus.OUTCOME,
-                        content=f"Observed prerequisite blocker: {missing}",
-                        tags={"goal:workshop_recovery", f"axis:{axis}",
-                              f"prerequisite:{missing}", "outcome:blocked"},
-                        outcome="blocked", cause=attempt.event_id,
-                        metadata={"observed_blocker": missing, "dependent": axis})
-                    self.memory.create_chunk(
-                        events=[attempt, result], transition_reason="causal_blocked_attempt",
-                        self_relevance=.9, salience=.95)
-                    self.learner.observe_prerequisite(missing, axis)
-                    observed_kind = "blocked"
-                else:
-                    self._feedback(
-                        f"scale-training-{trial}", trial,
-                        Action("resolve", candidate, axis), accepted,
-                        source="observed_training_trial", person=claim["source"],
-                    )
-                    # Source reliability is verified only if that testimony
-                    # was directly tested by the action, not by hidden truth.
-                    if candidate == claim["token"]:
-                        self.learner.verify_source(
-                            claim["source"], claim["context"], accepted)
+                success, outcome_id = self._attempt(
+                    task, procedure, episode=f"training-{index}",
+                    step=index, dependency=dependency, context_cues=cues)
                 self.training_observations.append({
-                    "trial": trial, "axis": axis, "candidate": candidate,
-                    "source": claim["source"], "context": claim["context"],
-                    "observed_outcome": observed_kind,
+                    "index": index, "public_context": reported,
+                    "inspected": inspected, "procedure": procedure,
+                    "observed_success": success,
+                    "outcome_event_id": outcome_id,
                 })
             self.experiences += 1
 
-    def _decision(self, state, actions, axes, *, round_no: int, step: str):
-        if self.treatment == "adaptive_focus":
-            remaining = tuple(axis for axis in axes if axis not in state.completed_axes)
-            chosen = self.learner.focus_axes(
-                remaining, state.completed_axes,
-                invalidated=set(state.invalidated_since), limit=2)
-            self._focus_axes = chosen or remaining
-            axes = self._focus_axes
-        else:
-            self._focus_axes = tuple(axes)
-        decision, trace = super()._decision(
-            state, actions, axes, round_no=round_no, step=step)
-        trace["focus_axes"] = list(self._focus_axes)
-        if self._last_retrieval_stats is not None:
-            stats = self._last_retrieval_stats
-            trace["candidate_headers"] = stats.candidate_chunks
-            trace["header_evaluations"] = stats.header_evaluations
-            trace["unnecessary_activations"] = stats.unnecessary_activations
-            trace["total_chunks"] = stats.total_chunks
-        return decision, trace
-
-    def _retrieve(self, axes, *, top_k=None):
-        hits, stats = super()._retrieve(axes, top_k=top_k)
-        self._last_retrieval_stats = stats
-        return hits, stats
-
-    def heldout(self, stage: int, memory_target: int, *,
-                familiar: bool = False) -> dict:
-        """Evaluation is forked so test-time success cannot leak into training."""
-        agent = pickle.loads(pickle.dumps(self))
-        if not familiar:
-            # Different hidden mappings and novel object/person combinations.
-            agent.world = UncertaintyWorld(self.seed * 7919 + 17 + stage)
-        agent.source_predictions = []
-        agent.traces = []
-        agent._resolved_change_axes = set()
-        agent._current_reports = {}
-        agent._last_retrieval_stats = None
-        agent.cost = defaultdict(float)
-        count_before = len(agent.memory.chunks)
-        target = max(count_before, memory_target)
-        extra = target - count_before
-        # Control for raw memory size independently of training. Add adversarial
-        # same-goal noise AND unrelated content; never label it causal feedback.
-        same_goal_noise = extra // 4
-        for i in range(same_goal_noise):
-            axis = AXES[i % len(AXES)]
-            signal = agent.world.options[axis][i % 4]
-            event = agent._event(
-                f"scale-noise-{stage}-{i}", i,
+    def _add_memory_load(self, count: int, *, target_seed: int) -> None:
+        """Additional memories, independently controlled from experience count."""
+        if count < 0:
+            raise ValueError("memory load cannot be negative")
+        misleading = count // 4
+        for index in range(misleading):
+            public = self.world.task(index + 300000 + target_seed).public()
+            cues = self.world.relational_cues(public)
+            event = self._event(
+                f"low-trust-{target_seed}-{index}", index,
                 kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
-                content="Unverified maintenance rumor",
-                tags={"goal:workshop_recovery", f"axis:{axis}",
-                      f"signal:{axis}:{signal}", "source:testimony"},
+                content="Unverified third-party maintenance claim",
+                tags=set(cues) | {"goal:workshop_recovery", "source:unverified"},
                 informative=False, confidence=.1,
                 metadata={"source_status": "unverified"},
             )
-            agent.memory.create_chunk(
-                events=[event], transition_reason="adversarial_noise",
-                self_relevance=.08, salience=.12)
-        agent.memory.inject_distractors(
-            extra - same_goal_noise, start_time=agent.clock + 1,
+            self.memory.create_chunk(
+                events=[event], transition_reason="distracting_unverified_claim",
+                self_relevance=.1, salience=.12)
+        self.memory.inject_distractors(
+            count - misleading, start_time=self.clock + 1,
             goal_id="unrelated_goal")
-        memory_at_test_start = len(agent.memory.chunks)
-        start_cost = dict(agent.cost)
-        rounds = [agent._execute_round(i) for i in range(agent.rounds)]
-        deltas = {key: value - start_cost.get(key, 0)
-                  for key, value in agent.cost.items()}
-        trace = agent.traces
-        samples = [t for t in trace if t.get("retrieved_chunk_ids") is not None]
-        # Proxies: matching an available axis cue does not prove causal relevance.
-        # Evaluate action success separately and NEVER equate retrieval with reasoning.
-        active = [t for t in samples if t.get("detail_events") is not None]
-        correct = sum(int(x["success"]) for x in rounds)
+
+    def _public_observation(self, task, episode: str) -> None:
+        public = task.public()
+        tags = set(self.world.relational_cues(public)) | {
+            "goal:workshop_recovery", "source:testimony"}
+        event = self._event(
+            episode, 0, kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
+            content=f"{task.source} reports dependency {task.reported_dependency}",
+            tags=tags, person=task.source, confidence=.5,
+            metadata={"source_status": "testimony",
+                      "reported_dependency": task.reported_dependency,
+                      "source": task.source, "context": task.context,
+                      "revision_notice": task.revision_notice})
+        self.memory.create_chunk(
+            events=[event], transition_reason="unverified_current_report",
+            self_relevance=task.self_relevance, salience=task.consequence)
+
+    def _decide(self, task, state: TransferState, *,
+                dependency: str, verified: bool, decision_number: int) -> tuple:
+        public = task.public()
+        cues = self.world.relational_cues(public, dependency=dependency)
+        learned_focus = self.treatment == "adaptive_focus"
+        if self.treatment in ("adaptive_focus", "bounded_without_learned_focus"):
+            focus = self.learner.select_context_focus(
+                cues, learned=learned_focus, budget=2) if learned_focus else frozenset(
+                c for c in cues if c.startswith("pair:"))
+        else:
+            focus = frozenset(c for c in cues if c.startswith("pair:"))
+        query_tags = focus | frozenset({
+            "goal:workshop_recovery", f"mode:{public['mode']}",
+            f"phase:{public['phase']}", f"material:{public['material']}",
+            f"dependency:{dependency}"})
+        if self.treatment == "shuffled_evidence":
+            query_tags = frozenset({
+                "goal:workshop_recovery", "pair:misaligned:untrusted"})
+        query = RetrievalQuery(goal_id="workshop_recovery",
+                               semantic_tags=query_tags, current_time=self.clock)
+        hits, stats = self.router.retrieve(query)
+        actions = [Action("resolve", procedure, "procedure")
+                   for procedure in self.world.PROCEDURES]
+        if task.profile != "simple" and not verified:
+            actions.append(Action("inspect_dependency", task.device_name, "dependency"))
+        for action in actions:
+            state.option_features[action.label] = cues | frozenset({
+                "goal:workshop_recovery", "action:choose", "role:workshop"})
+        state.current_time = self.clock
+        started = perf_counter()
+        audits, scores = {}, {}
+        for action in actions:
+            if action.kind == "inspect_dependency":
+                # This information option is available to every treatment;
+                # reflection can deliberately prefer it when evidence warrants.
+                score = .12 * (1.0 - self.learner.source_reliability(
+                    task.source, task.context)) * task.consequence
+                scores[action.label] = score
+                audits[action.label] = {"evidence_ids": [], "evaluations": 0}
+                continue
+            active = focus if learned_focus else cues
+            audit = self.interpreter.contextual_evidence(
+                hits, state.action_features(action), procedure=action.target,
+                source=task.source, source_context=task.context,
+                verified=verified, attention_cues=active)
+            audits[action.label] = audit
+            scores[action.label] = .85 * audit["score"]
+        # A trained one-pass control uses the same retrieval and evidence budget
+        # as adaptive focus, except for intentionally larger-retrieval ablation.
+        refine = self.treatment in (
+            "limited_reflection", "extended_reflection", "adaptive_focus",
+            "bounded_without_learned_focus")
+        selector = ActionSelector(
+            self.memory, self.learner,
+            random.Random(self.seed * 7001 + decision_number * 37),
+            refiner=self.refiner if refine else None)
+        decision = selector.select(
+            state, actions, hits, transfer_scores=scores, refine=refine,
+            transfer_context={
+                "cognitive_mode": "contextual", "audits": audits,
+                "attention_cues": focus,
+                "verified_dependency": verified,
+                "consequence": task.consequence,
+                "source_reliability": self.learner.source_reliability(
+                    task.source, task.context),
+                "inspection_cost": .25})
+        elapsed = (perf_counter() - started) * 1000.0
+        evaluations = sum(record.get("evaluations", 0) for record in audits.values())
+        return decision, {
+            "action": decision.action.label, "predicted_success": decision.predicted_success,
+            "retrieved_chunk_ids": [h.chunk_id for h in hits],
+            "candidate_headers": stats.candidate_chunks,
+            "header_evaluations": stats.header_evaluations,
+            "detail_events": stats.active_detail_events,
+            "unnecessary_activations": stats.unnecessary_activations,
+            "retrieval_ms": stats.latency_ms, "selection_ms": elapsed,
+            "interpretation_evaluations": evaluations,
+            "thought": decision.thought_trace,
+            "focus_cues": sorted(focus),
+            "evidence_ids": audits.get(decision.action.label, {}).get("evidence_ids", []),
+        }
+
+    def _solve(self, task, *, action_budget: int) -> dict:
+        episode = "heldout-" + task.task_id
+        state = TransferState(episode_id=episode)
+        self._public_observation(task, episode)
+        self.learner.begin_episode()
+        dependency = task.reported_dependency
+        verified = False
+        attempts = 0
+        success = False
+        first_procedure_correct = None
+        steps = []
+        for n in range(action_budget):
+            decision, trace = self._decide(
+                task, state, dependency=dependency, verified=verified,
+                decision_number=n + len(self.traces))
+            chosen = decision.action
+            if chosen.kind == "inspect_dependency":
+                observed = self.world.inspect_dependency(task)
+                dependency = observed["dependency"]
+                verified = True
+                observation = self._event(
+                    episode, n, kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
+                    content="Instrument directly confirms dependency state",
+                    tags=set(self.world.relational_cues(task.public(), dependency=dependency))
+                         | {"goal:workshop_recovery", "source:current_protocol"},
+                    metadata={"source_status": "current_protocol",
+                              "observed_dependency": dependency})
+                self.memory.create_chunk(
+                    events=[observation], transition_reason="observed_dependency",
+                    self_relevance=task.self_relevance, salience=1.0)
+                if self.treatment != "untrained_structural":
+                    self.learner.verify_source(
+                        task.source, task.context,
+                        dependency == task.reported_dependency)
+                    self.learner.learn_observation_value(
+                        dependency != task.reported_dependency)
+                trace["outcome"] = "investigated"
+                trace["observation_ids"] = [observation.event_id]
+                if decision.thought_trace is not None:
+                    self.refiner.feedback(
+                        state, decision, outcome=None,
+                        outcome_event_ids=(observation.event_id,))
+            else:
+                cues = self.world.relational_cues(task.public(), dependency=dependency)
+                success, event_id = self._attempt(
+                    task, chosen.target, episode=episode, step=n,
+                    dependency=dependency, context_cues=cues,
+                    used_evidence_ids=trace["evidence_ids"])
+                if first_procedure_correct is None:
+                    first_procedure_correct = success
+                attempts += 1
+                trace["outcome"] = "success" if success else "failure"
+                if decision.thought_trace is not None:
+                    self.refiner.feedback(
+                        state, decision, outcome=trace["outcome"],
+                        outcome_event_ids=(event_id,))
+            steps.append(trace)
+            self.traces.append(trace)
+            state.record_action(chosen)
+            if success:
+                break
+        return {
+            "task_id": task.task_id, "completed": success,
+            "first_procedure_correct": bool(first_procedure_correct),
+            "total_actions": len(steps),
+            "attempts": attempts,
+            "inspections": sum(step["outcome"] == "investigated" for step in steps),
+            "thought_versions": len(self.refiner.thread(state).versions)
+                                if self.treatment in (
+                                  "limited_reflection", "extended_reflection",
+                                  "adaptive_focus", "bounded_without_learned_focus") else 0,
+            "traces": steps,
+        }
+
+    def heldout(self, stage: int, memory_target: int, *,
+                familiar: bool = False, complexity: int = 2,
+                task_seed: int = 8008) -> dict:
+        """Freeze evaluation tasks independently of training checkpoints."""
+        agent = pickle.loads(pickle.dumps(self))
+        agent.traces = []
+        agent._add_memory_load(memory_target, target_seed=task_seed)
+        starting_memories = len(agent.memory.chunks)
+        # The held-out world is independent of training history. Its private
+        # causal mechanism is stable; never transfer a surface answer table.
+        test_world = ContextualWorld(self.seed + task_seed)
+        agent.world = test_world
+        outcomes = []
+        for n in range(agent.rounds):
+            task = test_world.task(n, heldout=not familiar, complexity=complexity)
+            outcomes.append(agent._solve(task, action_budget=agent.action_budget))
+        steps = [step for row in outcomes for step in row["traces"]]
+        avg = lambda key: (statistics.mean(float(s[key]) for s in steps)
+                           if steps else 0.0)
+        correct = [float(row["completed"]) for row in outcomes]
         return {
             "seed": self.seed, "treatment": self.treatment,
-            "training_experiences": self.experiences if self.treatment != "untrained_structural" else 0,
-            "stage": stage, "familiar": familiar,
-            "memory_target": memory_target, "stored_memories": memory_at_test_start,
+            "training_experiences": self.experiences if self.treatment !=
+                                    "untrained_structural" else 0,
+            "stage": stage, "complexity": complexity, "familiar": familiar,
+            "memory_target": memory_target, "stored_memories": starting_memories,
             "stored_after_trials": len(agent.memory.chunks),
-            "rounds": len(rounds), "completed_rounds": correct,
-            "completion_rate": correct / len(rounds),
-            "first_action_accuracy": statistics.mean(float(r["first_action_correct"])
-                                                      for r in rounds),
-            "mean_actions": statistics.mean(r["actions"] for r in rounds),
-            "mean_wrong_actions": statistics.mean(r["wrong_decisions"] for r in rounds),
-            "mean_inspections": statistics.mean(r["verification_actions"] for r in rounds),
-            "mean_active_details": statistics.mean(t["detail_events"] for t in active) if active else 0.0,
-            "mean_header_evaluations": statistics.mean(
-                t.get("header_evaluations", 0) for t in samples) if samples else 0.0,
-            "mean_unused_activation": statistics.mean(
-                t.get("unnecessary_activations", 0) for t in samples) if samples else 0.0,
-            "mean_selection_ms": deltas.get("selection_ms", 0) / max(1, len(samples)),
-            "mean_retrieval_ms": deltas.get("retrieval_ms", 0) / max(1, len(samples)),
-            "interpretation_evaluations": deltas.get("interpretation_evaluations", 0),
-            "counterfactual_evaluations": deltas.get("counterfactual_evaluations", 0),
-            "reflection_action_changes": sum(bool(t.get("reflection_changed_action"))
-                                             for t in trace),
-            "focus_axis_count": statistics.mean(
-                len(t.get("focus_axes", ())) for t in samples) if samples else 0.0,
-            "round_successes": [bool(r["success"]) for r in rounds],
+            "rounds": len(outcomes), "completed_rounds": int(sum(correct)),
+            "completion_rate": statistics.mean(correct),
+            "first_action_accuracy": statistics.mean(
+                float(o["first_procedure_correct"]) for o in outcomes),
+            "mean_actions": statistics.mean(o["total_actions"] for o in outcomes),
+            "mean_inspections": statistics.mean(o["inspections"] for o in outcomes),
+            "mean_active_details": avg("detail_events"),
+            "mean_header_evaluations": avg("header_evaluations"),
+            "mean_unused_activation": avg("unnecessary_activations"),
+            "mean_retrieval_ms": avg("retrieval_ms"),
+            "mean_selection_ms": avg("selection_ms"),
+            "mean_processing_evaluations": avg("interpretation_evaluations"),
+            "mean_thought_versions": statistics.mean(
+                o["thought_versions"] for o in outcomes),
+            "round_successes": [bool(o["completed"]) for o in outcomes],
+            "tasks": outcomes,
         }
 
 
-def _paired_interval(deltas: list[float], seed: int = 8008) -> list[float] | None:
+def _paired_interval(deltas: list[float]) -> list[float] | None:
     if len(deltas) < 2:
         return None
-    rng = random.Random(seed)
-    sample = sorted(statistics.mean(deltas[rng.randrange(len(deltas))]
-                                    for _ in deltas) for _ in range(2000))
-    return [sample[49], sample[1949]]
+    rng = random.Random(8008)
+    draws = sorted(statistics.mean(deltas[rng.randrange(len(deltas))]
+                                   for _ in deltas) for _ in range(2000))
+    return [draws[49], draws[1949]]
 
 
 def run_scaling_experiment(
     output_dir: str | Path, *, seeds=tuple(range(1, 31)),
     stages=DEFAULT_STAGES, memory_targets=DEFAULT_MEMORY,
-    conditions=tuple(CONDITIONS_8), rounds=4,
-    action_budget=9, candidate_budget=128,
+    conditions=tuple(CONDITIONS_8), complexities=DEFAULT_COMPLEXITIES,
+    rounds=4, action_budget=3, candidate_budget=48,
 ) -> dict:
-    """Cumulative training, stage-by-stage held-out evaluation, paired conditions."""
-    if not seeds:
-        raise ValueError("at least one seed required")
-    if not stages or len(stages) != len(memory_targets):
-        raise ValueError("each training stage requires a memory target")
-    if any(n <= 0 for n in stages) or sorted(stages) != list(stages):
-        raise ValueError("training stages must be positive and increasing")
-    if any(n <= 0 for n in memory_targets):
-        raise ValueError("memory targets must be positive")
-    if any(c not in CONDITIONS_8 for c in conditions):
-        raise ValueError("invalid treatment")
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    runs = []
+    """Factorial design: hold out task bank independently of all three factors."""
+    if not seeds or not stages or any(v < 1 for v in stages):
+        raise ValueError("positive seeds and training stages required")
+    if tuple(sorted(set(stages))) != tuple(stages):
+        raise ValueError("training stages must increase")
+    if not memory_targets or any(v < 0 for v in memory_targets):
+        raise ValueError("memory load must be nonnegative")
+    if not complexities or any(v not in (1, 2, 3) for v in complexities):
+        raise ValueError("invalid task complexities")
+    if not conditions or any(c not in CONDITIONS_8 for c in conditions):
+        raise ValueError("unknown cognitive treatment")
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    trials = []
     for seed in seeds:
-        agents = {c: ScalingRun(seed, c, rounds=rounds,
-                                action_budget=action_budget,
-                                candidate_budget=candidate_budget)
-                  for c in conditions}
-        for stage, (experiences, target) in enumerate(zip(stages, memory_targets)):
+        agents = {name: ScalingRun(seed, name, rounds=rounds,
+                                   action_budget=action_budget,
+                                   candidate_budget=candidate_budget)
+                  for name in conditions}
+        for stage, checkpoint in enumerate(stages):
             for treatment, agent in agents.items():
-                agent.add_experiences(experiences)
-                result = agent.heldout(stage, target, familiar=False)
-                runs.append(result)
-    summary = {}
-    for stage, experiences in enumerate(stages):
-        summary[str(experiences)] = {}
+                agent.add_experiences(checkpoint)
+                for load in memory_targets:
+                    for complexity in complexities:
+                        trials.append(agent.heldout(
+                            stage, load, complexity=complexity, task_seed=8008))
+    rows = {}
+    for checkpoint in stages:
+        rows[str(checkpoint)] = {}
         for name in conditions:
-            group = [r for r in runs if r["stage"] == stage and r["treatment"] == name]
-            summary[str(experiences)][name] = {
-                "completion_rate": statistics.mean(r["completion_rate"] for r in group),
-                "first_action_accuracy": statistics.mean(r["first_action_accuracy"] for r in group),
-                "mean_actions": statistics.mean(r["mean_actions"] for r in group),
-                "mean_detail_reads": statistics.mean(r["mean_active_details"] for r in group),
-                "mean_header_evaluations": statistics.mean(r["mean_header_evaluations"] for r in group),
-                "mean_retrieval_ms": statistics.mean(r["mean_retrieval_ms"] for r in group),
+            matched = [r for r in trials if r["training_experiences"] ==
+                       (0 if name == "untrained_structural" else checkpoint)
+                       and r["treatment"] == name and r["stage"] ==
+                       stages.index(checkpoint)]
+            rows[str(checkpoint)][name] = {
+                "completion_rate": statistics.mean(r["completion_rate"] for r in matched),
+                "first_action_accuracy": statistics.mean(
+                    r["first_action_accuracy"] for r in matched),
+                "mean_actions": statistics.mean(r["mean_actions"] for r in matched),
+                "mean_detail_reads": statistics.mean(r["mean_active_details"] for r in matched),
+                "mean_header_evaluations": statistics.mean(
+                    r["mean_header_evaluations"] for r in matched),
+                "mean_retrieval_ms": statistics.mean(r["mean_retrieval_ms"] for r in matched),
                 "mean_processing_evaluations": statistics.mean(
-                    r["interpretation_evaluations"] for r in group),
-                "mean_memories": statistics.mean(r["stored_memories"] for r in group),
-                "by_seed": [{"seed": r["seed"], "completion": r["completion_rate"],
-                             "actions": r["mean_actions"]} for r in group],
+                    r["mean_processing_evaluations"] for r in matched),
+                "mean_memories": statistics.mean(r["stored_memories"] for r in matched),
+                "by_seed": [{"seed": r["seed"], "complexity": r["complexity"],
+                             "distractors": r["memory_target"],
+                             "completion": r["completion_rate"]}
+                            for r in matched],
             }
     paired = {}
-    if "adaptive_focus" in conditions and "strong_one_pass" in conditions:
-        for stage, experiences in enumerate(stages):
-            a = {(r["seed"], r["stage"]): r["completion_rate"] for r in runs
-                 if r["treatment"] == "adaptive_focus" and r["stage"] == stage}
-            b = {(r["seed"], r["stage"]): r["completion_rate"] for r in runs
-                 if r["treatment"] == "strong_one_pass" and r["stage"] == stage}
-            deltas = [a[k] - b[k] for k in sorted(a)]
-            paired[str(experiences)] = {"seed_deltas": deltas,
-                                        "bootstrap_95_interval": _paired_interval(deltas)}
+    if {"adaptive_focus", "strong_one_pass"}.issubset(conditions):
+        for stage, checkpoint in enumerate(stages):
+            a = { (r["seed"], r["complexity"], r["memory_target"]): r
+                  for r in trials if r["stage"] == stage and r["treatment"] == "adaptive_focus"}
+            b = { (r["seed"], r["complexity"], r["memory_target"]): r
+                  for r in trials if r["stage"] == stage and r["treatment"] == "strong_one_pass"}
+            deltas = [a[key]["completion_rate"] - b[key]["completion_rate"]
+                      for key in sorted(a)]
+            paired[str(checkpoint)] = {
+                "matched_deltas": deltas,
+                "bootstrap_95_interval": _paired_interval(deltas),
+            }
     payload = {
-        "experiment": 8, "seeds": list(seeds), "stages": list(stages),
-        "memory_targets": list(memory_targets), "conditions": list(conditions),
-        "stage_results": summary, "paired_focus_vs_onepass": paired,
+        "experiment": 8, "design": "factorial_shared_heldout_context",
+        "seeds": list(seeds), "stages": list(stages),
+        "memory_targets": list(memory_targets),
+        "complexities": list(complexities), "conditions": list(conditions),
+        "stage_results": rows, "paired_focus_vs_onepass": paired,
         "limitations": [
-            "These are synthetic role/category worlds; no natural-language reasoning claim.",
-            "Held-out worlds change mappings and scenes but reuse the same five abstract roles.",
-            "Reflection depth is fixed within each inherited Experiment 7 treatment; "
-            "adaptive_focus learns category priority, not an outcome-trained stopping rule.",
-            "Retrieval efficiency is separate from decision accuracy; report both.",
-            "Some memory targets are raised to the already-accumulated training memory size.",
-            "Paired models receive the same environment distribution and experience sequence, "
-            "but baseline retrieval/interpretation compute is measured, not strictly matched.",
-            "Durability by separate-process restart requires an additional independent gate.",
+            "Procedural contextual reasoning only: no natural-language general cognition claim.",
+            "World causal rule is fixed across scenarios but synthetic and small.",
+            "Source reliability is validated only when instrument observations permit it.",
+            "Evidence and retrieval budgets are bounded; full instruction-level compute matching is not established.",
+            "Metric confidence intervals must resample independent seeds, not correlated task cells.",
+            "Focused retrieval may miss relevant causal evidence; explicit recall checks remain needed.",
+            "Learning curves at 10,000 experiences and 20,000 memories require a separate full run.",
         ],
     }
-    (output / "scaling_trials.json").write_text(
-        json.dumps(runs, indent=2, sort_keys=True), encoding="utf-8")
-    (output / "scaling_summary.json").write_text(
+    (out / "scaling_trials.json").write_text(
+        json.dumps(trials, indent=2, sort_keys=True), encoding="utf-8")
+    (out / "scaling_summary.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return payload
