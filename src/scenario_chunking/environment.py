@@ -690,3 +690,48 @@ class TemporalDecisionWorld:
             raise ValueError("unsupported action")
         self.reward += delta
         return delta
+
+
+class IncrementalDispatchWorld:
+    """E11 private environment. Public cues never expose its causal rule.
+
+    Each world instance permits exactly one execution. Paired conditions use a
+    deterministic potential outcome for each action (common environment draw),
+    so different learned choices never shift later scenarios' random stream.
+    """
+    def __init__(self, *, family: str, factors: dict[str, str], epoch: int,
+                 outcomes: dict[str, bool]) -> None:
+        if family not in ("delivery", "repair", "coordination"):
+            raise ValueError("unknown dispatch family")
+        self.family, self.factors, self.epoch = family, dict(factors), epoch
+        self._outcomes = dict(outcomes)
+        self.executed = False
+
+    def public_cues(self) -> frozenset[str]:
+        return frozenset(
+            {f"pair:domain:{self.family}", f"pair:epoch:{self.epoch}"} |
+            {f"pair:{axis}:{value}" for axis, value in self.factors.items()})
+
+    def execute(self, action: Action) -> EnvironmentSignal:
+        if self.executed:
+            raise RuntimeError("one unique experience may be executed only once")
+        if action.kind != "route" or action.target not in self._outcomes:
+            raise ValueError("unsupported dispatch action")
+        self.executed = True
+        succeeded = self._outcomes[action.target]
+        cost = {"standard": .02, "express": .18}[action.target]
+        return EnvironmentSignal(
+            kind=EventKind.OUTCOME, truth_status=TruthStatus.OUTCOME,
+            content="Observed dispatch " + ("success" if succeeded else "failure"),
+            semantic_tags=self.public_cues() | frozenset({"action:route",
+                               "procedure:" + action.target}),
+            outcome="success" if succeeded else "failure",
+            reward=(1.0 if succeeded else -1.0) - cost,
+            confidence=1.0, informative=True,
+            metadata={"procedure": action.target,
+                      "context_cues": sorted(self.public_cues())})
+
+    def counterfactual_reward(self, procedure: str) -> float:
+        """Offline evaluator only; never delivered to the cognitive pipeline."""
+        return (1.0 if self._outcomes[procedure] else -1.0) - {
+            "standard": .02, "express": .18}[procedure]
