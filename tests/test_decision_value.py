@@ -109,10 +109,14 @@ def test_no_new_evidence_and_no_new_probability_band_does_not_revise_thought():
 
 def test_learning_and_thought_continuity_survive_new_python_process():
     learner, memory = train_temporal_evidence(14, 12)
-    run = DecisionValueRun(heldout_temporal_world(14, 3),
-                           mode="predictive_value", seed=14,
+    world = TemporalDecisionWorld((
+        TemporalDelivery("Ada", "routine", 5, 5.5, 9, 3, .8),
+        TemporalDelivery("Bea", "night", 6, 7.5, 11, 3, .8),
+    ), switch_reward=.01, wait_cost=.005)
+    run = DecisionValueRun(world, mode="predictive_value", seed=14,
                            learner=learner, memory=memory)
     run.step()
+    assert not run.world.finished
     encoded = base64.b64encode(pickle.dumps(run)).decode("ascii")
     code = (
         "import base64,pickle,sys;"
