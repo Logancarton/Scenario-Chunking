@@ -67,6 +67,56 @@ jobs:
           assert r["challenges"]["exception"]["summary"]["unified"]["regime_flags"] == 0
           assert r["challenges"]["abrupt"]["summary"]["unified"]["regime_flags"] >= 1
           PYTHON
+      - name: E12 optional working memory paired research comparison (no superiority assumption)
+        run: |
+          python - <<'PYTHON'
+          from scenario_chunking.causal_experiment import write_causal_benchmark
+          from scenario_chunking.causal_challenges import write_challenges
+          seeds = (2309, 2411, 2503, 2609, 2711)
+          conditions = ("unified", "unified_activation")
+          for protocol in ("matched", "online"):
+              report = write_causal_benchmark(
+                  "results-e12-unified/working-memory-" + protocol,
+                  seeds=seeds, conditions=conditions, reference="unified",
+                  protocol=protocol, workers=4)
+              assert len(report["trials"]) == len(seeds) * len(conditions) * 4 * 32
+              assert all(r["detail_events"] <= 16 for r in report["trials"])
+              assert all(r["header_evaluations"] <= 80 for r in report["trials"])
+              assert all(not r["update"]["updated"] for r in report["trials"]
+                         if r["stage"] == "heldout")
+              if protocol == "matched":
+                  rows = {}
+                  for r in report["trials"]:
+                      if r["stage"] == "train":
+                          rows[(r["seed"], r["family"], r["epoch"], r["index"], r["mode"])] = r
+                  for seed in seeds:
+                      for family in ("delivery", "repair", "coordination"):
+                          for epoch in range(2 if family == "coordination" else 1):
+                              for index in range(32):
+                                  a = rows.get((seed, family, epoch, index, "unified"))
+                                  b = rows.get((seed, family, epoch, index, "unified_activation"))
+                                  if a is not None and b is not None:
+                                      assert (a["action"], a["outcome"], a["time"]) == (
+                                          b["action"], b["outcome"], b["time"])
+              print("E12_WM_BENCHMARK", protocol,
+                    {mode: {k: round(r[k], 5) for k in
+                        ("reward", "regret", "all_action_brier", "detail_events",
+                         "header_evaluations", "scoring_work_per_experience")}
+                     for mode, r in report["summary"].items()})
+              print("E12_WM_PAIRED_BASE_MINUS_WM", protocol,
+                    report["paired_reward_deltas"]["unified_activation"]["metrics"])
+          challenges = write_challenges(
+              "results-e12-unified/working-memory-challenges",
+              names=("exception", "abrupt", "long_gap"), seeds=(2309, 2411),
+              conditions=conditions, reference="unified", workers=2)
+          for name, report in challenges["challenges"].items():
+              print("E12_WM_CHALLENGE", name, {
+                  mode: {k: v for k, v in metrics.items()
+                         if k.startswith(("final_", "regime", "header_evaluations",
+                                          "learned_state_bytes"))}
+                  for mode, metrics in report["summary"].items()})
+          PYTHON
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
