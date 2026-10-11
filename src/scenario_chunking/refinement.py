@@ -614,6 +614,84 @@ class ProgressiveRefiner:
             "additional_detailed_reads": 0,
         }
 
+    def refine_temporal_value(self, state: CognitiveState, scored, hits, *,
+                              context: dict):
+        """E10: only revise when a value calculation may change the decision.
+
+        Reads the SAME sourced interpretation, not extra evidence. A thought
+        version carries provenance and uncertainty, not additional votes.
+        ActionSelector alone remains responsible for ranking final actions.
+        """
+        if not scored:
+            raise ValueError("no temporal options")
+        thread = self.thread(state)
+        self._focus(thread, state.world_time)
+        direct = sorted(scored, key=lambda x: (-x[0], x[1].label))
+        values = context["candidate_values"]
+        costs = float(context.get("thought_cost", .02))
+        base = direct[0][1]
+        ranked = sorted(scored, key=lambda x: (-values.get(x[1].label, -1e9),
+                                                x[1].label))
+        best = ranked[0][1]
+        improved_value = values.get(best.label, -1e9) - values.get(base.label, -1e9)
+        should_revise = (context.get("value_enabled", True)
+                         and best != base and improved_value > costs)
+        if context.get("clock_rule", False):
+            due = [name for name, exp in state.timed_expectations.items()
+                   if exp.status == "due_unverified"]
+            desired = "check:" + sorted(due)[0].removeprefix("delivery:") if due else base.label
+            candidate = next((r for r in scored if r[1].label == desired), None)
+            best = candidate[1] if candidate is not None else base
+            should_revise = best != base
+        all_ids = list(context.get("evidence_ids", ()))
+        evidence_ids = tuple(dict.fromkeys(all_ids))
+        # Temporal threshold is meaningful only when a decision or probability
+        # band changes, not simply because a thought remained activated.
+        band = tuple(sorted((p, int(v * 8)) for p, v in
+                            context.get("presence", {}).items()))
+        signature = (evidence_ids, band, base.label,
+                     best.label if should_revise else base.label)
+        changed = (not thread.versions
+                   or thread.versions[-1].signature != signature)
+        if changed and len(thread.versions) < self.max_versions:
+            thread.versions.append(ThoughtVersion(
+                number=len(thread.versions) + 1,
+                preferred_action=best.label if should_revise else base.label,
+                alternatives=tuple(row[1].label for row in ranked[:3]
+                                   if row[1] != best),
+                evidence_ids=evidence_ids,
+                memory_chunk_ids=tuple(hit.chunk_id for hit in hits),
+                contradictions=(),
+                uncertainty=max(0.0, 1.0 - max(context.get("presence", {}).values(),
+                                               default=0.0)),
+                reason="expected_decision_gain" if should_revise
+                       else "insufficient_refinement_value",
+                signature=signature, time=state.world_time,
+                predicted_outcomes=tuple(sorted(
+                    (p, float(v)) for p, v in context.get("presence", {}).items())),
+            ))
+        if not thread.versions:
+            raise RuntimeError("temporal thought cap cannot suppress initial version")
+        result = direct
+        if should_revise:
+            preferred = next(x for x in scored if x[1] == best)
+            result = [(max(x[0] for x in scored) + 1.0, preferred[1],
+                       preferred[2] + ["reconsidered_decision_value"],
+                       preferred[3])] + [x for x in direct if x[1] != best]
+        return result, {
+            "thought_id": thread.thought_id, "version": thread.versions[-1].number,
+            "changed": changed, "reasoning_cycles": 2 if should_revise else 1,
+            "reasoning_stopped": not changed,
+            "decision_basis": thread.versions[-1].reason,
+            "activation_state": thread.status_at(state.world_time),
+            "contributing_evidence_ids": list(evidence_ids),
+            "meaningfully_changed_action": should_revise,
+            "additional_detailed_reads": 0,
+            "expected_gain_before_thought_cost": max(0.0, improved_value),
+            "thought_cost": costs,
+            "predicted_presence": dict(context.get("presence", {})),
+        }
+
     def feedback(self, state: CognitiveState, decision, *, outcome: str | None,
                  outcome_event_ids: tuple[str, ...]) -> None:
         if not decision.thought_trace:
