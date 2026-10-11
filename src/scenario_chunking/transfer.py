@@ -74,6 +74,22 @@ class TransferState:
     excluded_axis: str | None = None
     scramble: bool = False
     choices: dict[str, tuple[str, str]] = field(default_factory=dict)
+    invalidated_since: dict[str, float] = field(default_factory=dict)
+
+    def policy_features(self, action: Action) -> frozenset[str]:
+        """Namespace new beliefs after an observed validity change.
+
+        Previously learned success is historical evidence, not a current
+        policy prior. New feedback gets distinct epoch-scoped associations.
+        """
+        features = set(self.action_features(action))
+        for axis, epoch in self.invalidated_since.items():
+            for cue in tuple(features):
+                prefix = f"signal:{axis}:"
+                if cue.startswith(prefix):
+                    features.remove(cue)
+                    features.add(f"epoch:{axis}:{int(epoch)}:{cue[len(prefix):]}")
+        return frozenset(features)
 
     def action_features(self, action: Action) -> frozenset[str]:
         cues = self.option_features.get(action.label, frozenset())
@@ -103,7 +119,7 @@ class TransferRun:
         self.seed, self.condition, self.rounds = seed, condition, rounds
         self.world = TransferWorld(seed)
         self.memory = EpisodicMemory()
-        self.learner = OutcomeLearner()
+        self.learner = OutcomeLearner(strict_credit=True)
         self.interpreter = MeaningInterpreter(self.memory, self.learner)
         self.refiner = ProgressiveRefiner(self.learner, learning=False)
         self.router = MemoryRouter(self.memory, RetrievalMode.STRUCTURAL, top_k=32 if condition == "strong_one_pass" else 16)
@@ -141,8 +157,7 @@ class TransferRun:
         if state is None:
             features = frozenset({f"signal:{axis}:{token}", "action:choose", "role:workshop"})
         else:
-            features = state.action_features(action)
-        self.learner.begin_episode()
+            features = state.policy_features(action)
         self.learner.register_action(attempt.event_id, features)
         result = self._event(
             episode, step, kind=EventKind.OUTCOME, truth=TruthStatus.OUTCOME,
@@ -161,6 +176,37 @@ class TransferRun:
         )
         return attempt.event_id, result.event_id
 
+    def _feedback_plan(self, episode: str, action: Action, accepted: bool, *,
+                       state: TransferState, evidence_ids=()) -> str:
+        """Attribute verified integrated success, but not unknown-cause failure.
+
+        A failed joint plan identifies no specific failed category, so assigning
+        negative policy credit to all five cues would fabricate causal blame.
+        """
+        tags = {"goal:workshop_recovery", "role:integrated_plan"}
+        attempt = self._event(
+            episode, 0, kind=EventKind.ACTION, truth=TruthStatus.ATTEMPT,
+            content=f"Submitted proposed combined restoration: {action.label}",
+            tags=tags, action=action)
+        self.learner.register_action(
+            attempt.event_id, state.policy_features(action),
+            used_evidence_ids=evidence_ids,
+        )
+        outcome = self._event(
+            episode, 0, kind=EventKind.OUTCOME, truth=TruthStatus.OUTCOME,
+            content="Observed joint plan success" if accepted else "Observed joint plan failure",
+            tags=tags | {f"outcome:{'success' if accepted else 'failure'}"},
+            outcome="success" if accepted else "failure",
+            cause=attempt.event_id,
+        )
+        if accepted:
+            self.learner.apply_success(attempt.event_id)
+        self.memory.create_chunk(
+            events=[attempt, outcome], transition_reason="integrated_plan_feedback",
+            self_relevance=1.0, salience=1.0,
+        )
+        return outcome.event_id
+
     def train(self) -> None:
         if self.condition == "untrained_structural":
             return
@@ -175,6 +221,7 @@ class TransferRun:
                 historical = axis == "time" and i < 6
                 accepted = self.world.accepted(axis, token, historical=historical)
                 source = rng.choice(("instrument", "technician", "inspection"))
+                self.learner.begin_episode()
                 aid, oid = self._feedback(
                     f"learning-{axis}-{i}", i, Action("resolve", token, axis),
                     accepted, source=source, historical=historical,
@@ -248,7 +295,7 @@ class TransferRun:
         return float(values[-1]["score"]) if values else None
 
     def _retrieve(self, axes: tuple[str, ...], *, top_k: int | None = None):
-        tags = {"goal:workshop_recovery"}
+        tags = {"goal:workshop_recovery", "source:current_protocol"}
         for axis in axes:
             tags.add(f"axis:{axis}")
             tags.update(f"signal:{axis}:{t}" for t in self.world.options[axis])
@@ -335,11 +382,34 @@ class TransferRun:
         }
 
     def _state(self, episode: str) -> TransferState:
+        # Rebuild validity state from retrieved observed notices, not hidden
+        # environment truth or a task-runner cache.
+        query = RetrievalQuery(
+            goal_id="workshop_recovery",
+            semantic_tags=frozenset({
+                "goal:workshop_recovery", "revision:announced",
+            }), current_time=self.clock,
+        )
+        hits, stats = MemoryRouter(
+            self.memory, RetrievalMode.STRUCTURAL, top_k=12
+        ).retrieve(query)
+        self.cost["header_evaluations"] += stats.header_evaluations
+        self.cost["detail_events"] += stats.active_detail_events
+        self.cost["retrieval_ms"] += stats.latency_ms
+        changed = {}
+        for hit in hits:
+            for event in self.memory.chunk_events(hit.chunk_id):
+                if (event.kind == EventKind.OBSERVATION and
+                        event.truth_status == TruthStatus.FACT and
+                        event.metadata.get("change_notice") and
+                        event.metadata.get("changed_axis") in AXES):
+                    axis = event.metadata["changed_axis"]
+                    changed[axis] = max(changed.get(axis, 0.0), event.occurrence_time)
         return TransferState(
             episode_id=episode, current_time=self.clock,
             excluded_axis=self.disabled_axis,
             scramble=self.condition == "shuffled_relationships",
-            choices=self.world.options,
+            choices=self.world.options, invalidated_since=changed,
         )
 
     def _record_step(self, record: dict, success: bool) -> None:
@@ -357,7 +427,7 @@ class TransferRun:
                 kind=EventKind.OBSERVATION, truth=TruthStatus.FACT,
                 content="The workshop protocol has changed; previous temporal advice may be obsolete",
                 tags={"goal:workshop_recovery", "axis:time", "revision:announced"},
-                informative=True, metadata={"change_notice": True},
+                informative=True, metadata={"change_notice": True, "changed_axis": "time"},
             )
             self.memory.create_chunk(
                 events=[notice], transition_reason="revision_notice",
