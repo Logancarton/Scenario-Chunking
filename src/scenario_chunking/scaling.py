@@ -284,7 +284,7 @@ class ScalingRun(UncertaintyRun):
         for n in range(action_budget):
             decision, trace = self._decide(
                 task, state, dependency=dependency, verified=verified,
-                decision_number=n + len(self.traces))
+                decision_number=n + 1000 * int(task.task_id.rsplit("-", 1)[-1]))
             chosen = decision.action
             if chosen.kind == "inspect_dependency":
                 observed = self.world.inspect_dependency(task)
