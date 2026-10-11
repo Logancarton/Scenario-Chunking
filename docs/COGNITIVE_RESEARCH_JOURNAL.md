@@ -500,3 +500,27 @@ reasoning or to untested 2,000/10,000 experience stages. Per-task compute,
 distractor interactions and causal memory recall are reported by the
 corrected research harness; further factorial and domain-transfer
 replication remains necessary.
+
+**Additional replication checks (same final 30-seed run):** Comparing
+*learned-focus one-pass* on the **same held-out tasks** at 500 versus
+20 experiences yielded **+21.7 percentage points** (seed-bootstrap
+95% interval [+15.0, +27.5]). Against the untrained baseline at 500
+experiences, learned-focus one-pass gained **+15.0 points**
+([+6.7, +22.5]). Adaptive focus with reflection gained **+13.3**
+([+5.0, +20.8]). In contrast, strong one-pass was **−15.0**
+([−23.3, −6.7]) compared with untrained at that stage.
+
+The result is evidence for experience-dependent, bounded focus on this
+procedural family, *not* evidence that reflection added utility. The
+one-pass-with-identical-focus comparison keeps initial retrieval cues,
+retrieval budget and source observations matched. Reflection adds
+investigations and alters trajectories, but no positive net completion
+benefit was measured. Report this negative conclusion alongside the
+focus advantage.
+
+**Verification:** 15 focused behavioral/durability tests, frozen
+factorial smoke and independent 30-seed replication passed in GitHub
+Actions. Full historical regression and Research Gates 6/7 remain the
+separate cumulative gate. The configured 2,000/10,000-experience and
+20,000-distractor stages are implemented but have not been executed as
+a verified large-scale study.
