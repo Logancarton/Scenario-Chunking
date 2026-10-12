@@ -133,3 +133,23 @@ def test_live_step_case_runs_continuous_path_without_oracle_goal_label():
     assert row["goal_verified"] is True
     assert len(row["verification_evidence"]) == 1
     assert row["activity_reassessments"] == 0
+
+
+def test_learning_activity_keeps_initial_variables_for_hindsight_after_restrictions_change():
+    # All three variables are inspected before execution, so a later public
+    # constraints refresh contains no uninspected variables. Appraisal must
+    # still reason about what the organism originally did not know.
+    run = cm.InvestigativeRun(
+        31, "metacognitive", exploration=0,
+        policy=cm.Policy("all", "learned", diagnosis=True))
+    case = activity_case(
+        steps=[{"content": "Route permission revoked",
+                "prohibited": ["standard", "express"]}],
+        verification=[{"requirement": "recipient_confirmed",
+                       "satisfied": False, "source": "recipient_ack", "final": True}])
+    row = run.step_case(case, learn=True)
+    assert row["inspections"] == ["capacity", "color", "weather"]
+    assert row["action"] == "defer" and row["violations"] == 0
+    assert row["activity_revisions"] == 1
+    assert row["goal_status_final"] == "failed"
+    assert run.learner.control.updates > 0
