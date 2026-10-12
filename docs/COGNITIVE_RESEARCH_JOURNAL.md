@@ -1305,3 +1305,22 @@ study conditions, algorithms, and frozen results are not redefined. Tests check
 that implicit pool creation is forbidden. This is **supporting infrastructure**,
 not a claim that learning, sparse cognition, execution monitoring, or transfer
 has improved. Full replication and independent cognitive evaluation remain required.
+
+
+### Experiment 12 — opt-in unfolding activity / observed goal assessment (candidate, 2026-10-12)
+
+A deliberately narrow synthetic activity exercises existing `CognitiveState` as the
+single goal authority, `InvestigationWorld` as the private unfolding simulator,
+and `InvestigativeRun` as a thin sequence through the same interpreter,
+refiner, and sole selector. Unlike the historical one-step outcomes, the
+activity begins before final outcome, emits sourced intermediate observations,
+and reassesses only when public context or hard authorization changes.
+The mechanical result does NOT mark a criteria-bearing goal verified. Goal
+requirements remain open until separate sourced observations arrive; delayed
+checks and restarts are inspectable through the same existing state.
+
+This is **research integration only**, not proven metacognitive improvement.
+Goal-evidence validation is synthetic and source-grounded, not independent
+real-world corroboration. Goal outcomes do not yet update the slow process
+learner, and no comparative sparse-compute, transfer, deferral-trap, or
+learning-to-learn conclusion follows. Preserve historical PR #10 baselines.
