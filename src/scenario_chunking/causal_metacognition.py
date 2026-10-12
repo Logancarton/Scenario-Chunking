@@ -269,6 +269,8 @@ class Policy:
     option: bool = False       # price the future use of a scarce option
     exploration_gain: float | None = None   # initial process disposition (None: model default)
     competence_scale: float | None = None
+    activation: str = "dense"  # dense | fixed_sparse | learned_sparse
+    activation_limit: int = 2  # counterfactual variable axes per episode
 
     @property
     def process(self) -> bool:
@@ -388,14 +390,20 @@ class InvestigativeRun(CausalRun):
         permitted = frozenset(p for p in ("standard", "express") if p not in state.prohibited)
         calibrate = self._calibrate_for(scope)
         forced = self._forced_random(case, list(constraints["hidden"]), learn)
+        active_axes = self.learner.control.activate_axes(
+            scope, constraints["hidden"], mode=self.policy.activation,
+            limit=self.policy.activation_limit, experience=self.clock.experiences)
         inspections, greedy, analyses, option_costs, cpu = [], [], [], None, process_time()
         primitive = start  # First public cues were already acquired and installed in state.
         while True:
             if behavior is not None:
                 # Matched evidence: a fixed, learner-independent policy acts (no inspection).
                 actions = state.candidate_actions()
+                if self.policy.activation != "dense":
+                    actions = [a for a in actions if a.kind != "inspect" or a.target in active_axes]
                 analysis = self.interpreter.investigation_values(
-                    primitive, actions, constraints=constraints, permitted=permitted, calibrate=calibrate)
+                    primitive, actions, constraints=constraints, permitted=permitted,
+                    calibrate=calibrate, active_axes=active_axes)
                 analyses.append(analysis)
                 values, predictions = dict(analysis["values"]), analysis["predictions"]
                 greedy.append(max([p for p in values if p.startswith("route:") and
@@ -411,8 +419,11 @@ class InvestigativeRun(CausalRun):
                 decision = SimpleNamespace(action=decision)
                 break
             actions = state.candidate_actions()
+            if self.policy.activation != "dense":
+                actions = [a for a in actions if a.kind != "inspect" or a.target in active_axes]
             analysis = self.interpreter.investigation_values(
-                primitive, actions, constraints=constraints, permitted=permitted, calibrate=calibrate)
+                primitive, actions, constraints=constraints, permitted=permitted,
+                calibrate=calibrate, active_axes=active_axes)
             analyses.append(analysis)
             values, predictions = dict(analysis["values"]), analysis["predictions"]
             finals = [p for p in ("route:standard", "route:express", "route:defer")
@@ -490,6 +501,7 @@ class InvestigativeRun(CausalRun):
                 "stage_a": stage_a, "attempt": attempt, "observed": observed, "acted_at": now,
                 "learn": learn, "scope": scope,
                 "decision_cpu": process_time() - cpu,
+                 "active_axes": tuple(sorted(active_axes)),
                 "activity": activity, "activity_revisions": 0, "activity_reassessments": 0}
 
     def advance_activity(self, pending: dict) -> dict:
