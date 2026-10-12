@@ -73,6 +73,33 @@ class CognitiveControl:
             prior = max(prior, self.drive.get(scope, 0.0))
         return round(self._posterior(prior, self.relevance.get(axis, {}).get(scope, 0.0)), 9)
 
+    def activate_axes(self, scope: tuple, axes, *, mode: str, limit: int,
+                      experience: int) -> frozenset[str]:
+        """Allocate live computational hypotheses without hiding public evidence.
+
+        Fixed sparse is a nonlearning control. Learned sparse uses the existing
+        process relevance model and occasionally probes overlooked axes.
+        """
+        ordered = sorted(set(axes))
+        if mode == "dense":
+            return frozenset(ordered)
+        if mode not in ("fixed_sparse", "learned_sparse") or limit < 1:
+            raise ValueError("invalid sparse activation policy")
+        if len(ordered) <= limit:
+            return frozenset(ordered)
+        if mode == "fixed_sparse":
+            return frozenset(ordered[:limit])
+        ranked = sorted(ordered, key=lambda a: (-self.relevance_belief(scope, a), a))
+        chosen = ranked[:limit]
+        diagnosed = any(a.get("scope") == list(scope) and
+                        a.get("error") == "missing_information"
+                        for a in self.adjustments[-8:])
+        if diagnosed or experience % 7 == 0:
+            skipped = [a for a in ranked if a not in chosen]
+            if skipped:
+                chosen[-1] = skipped[(experience // 7) % len(skipped)]
+        return frozenset(chosen)
+
     def exploration_value(self, scope: tuple, axis: str, competence: float, *,
                           diagnosis: bool = True) -> float:
         """Value of examining a variable to LEARN about it: fades with competence."""
