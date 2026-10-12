@@ -416,9 +416,11 @@ def _execute(job: tuple) -> list[dict]:
 
 
 def _map_jobs(jobs: list[tuple], workers: int | None) -> list[list[dict]]:
-    if workers == 1 or len(jobs) == 1:
+    if workers is None or workers == 1 or len(jobs) == 1:
         return [_execute(job) for job in jobs]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(_execute, jobs))
 
 
@@ -531,6 +533,18 @@ def write_unified(output="results-e12-unified", *, seeds=FINAL_SEEDS, workers=No
 
 
 if __name__ == "__main__":
-    print(json.dumps({k: {"summary": r["summary"], "paired_reward_deltas": {
-        m: {x: d[x] for x in ("mean", "bootstrap_95_interval")} for m, d in r["paired_reward_deltas"].items()}}
-        for k, r in write_all().items()}, indent=2))
+    import sys
+    if sys.argv[1:] == ["full"]:
+        reports = write_all()
+    elif len(sys.argv) == 1:
+        # Small deterministic local sample; historical three-part gate is opt-in.
+        reports = {"smoke": write_causal_benchmark(
+            "results-e12-smoke", seeds=(7,), families=("delivery",),
+            conditions=("episodic_only", "explanation_full"),
+            reference="explanation_full", workers=1)}
+    else:
+        raise SystemExit("usage: python -m scenario_chunking.causal_experiment [full]")
+    print(json.dumps({k: {"summary": report["summary"], "paired_reward_deltas": {
+        mode: {key: diff[key] for key in ("mean", "bootstrap_95_interval")}
+        for mode, diff in report["paired_reward_deltas"].items()}}
+        for k, report in reports.items()}, indent=2))

@@ -824,7 +824,7 @@ class InvestigationWorld:
                  domains: dict[str, tuple[str, str]], truths: dict[str, bool],
                  outcomes: dict[str, bool], noise: float, inspect_costs: dict[str, float],
                  stakes: dict[str, dict[str, float]], prohibited: frozenset[str],
-                 defer_value: float, epoch: int = 0) -> None:
+                 defer_value: float, epoch: int = 0, activity: dict | None = None) -> None:
         if set(truths) != set(self.ROUTES) or set(outcomes) != set(self.ROUTES):
             raise ValueError("investigation worlds define both routes")
         if set(hidden) != set(inspect_costs) or set(hidden) != set(domains):
@@ -844,19 +844,29 @@ class InvestigationWorld:
         self.inspection_cost = 0.0
         self.executed = False
         self.violations = 0  # evaluation: executed prohibited routes (must stay 0)
+        # Private multi-step script. Only its individual factual observations can
+        # enter cognition; scripts and eventual evaluator truth cannot.
+        self._activity = dict(activity or {})
+        self._steps = tuple(self._activity.get("steps", ()))
+        self._checks = tuple(self._activity.get("verification", ()))
+        self._step_index = 0
+        self._check_index = 0
+        self._started_action: Action | None = None
 
     @classmethod
     def scripted(cls, *, seed: int, family: str, index: int, visible: dict[str, str],
                  hidden: dict[str, str], domains: dict[str, tuple[str, str]],
                  truths: dict[str, bool], noise: float = .08,
                  inspect_costs: dict[str, float], stakes: dict[str, dict[str, float]],
-                 prohibited=frozenset(), defer_value: float = -.3, epoch: int = 0):
+                 prohibited=frozenset(), defer_value: float = -.3, epoch: int = 0,
+                 activity: dict | None = None):
         if not 0.0 <= noise < .5:
             raise ValueError("noise must lie in [0, .5)")
         outcomes = IncrementalDispatchWorld._noisy(truths, f"investigation|{seed}|{family}|{index}", noise)
         return cls(family=family, visible=visible, hidden=hidden, domains=domains, truths=truths,
                    outcomes=outcomes, noise=noise, inspect_costs=inspect_costs, stakes=stakes,
-                   prohibited=frozenset(prohibited), defer_value=defer_value, epoch=epoch)
+                   prohibited=frozenset(prohibited), defer_value=defer_value, epoch=epoch,
+                   activity=activity)
 
     # -- public interface --------------------------------------------------------
     def public_cues(self) -> frozenset[str]:
@@ -910,6 +920,55 @@ class InvestigationWorld:
             reward=(stake["gain"] if succeeded else -stake["loss"]) - stake["cost"],
             confidence=1.0, informative=True,
             metadata={"procedure": action.target, "context_cues": cues})
+
+    # -- opt-in unfolding activity (legacy single-step execute remains unchanged) ----
+    def begin_activity(self, action: Action) -> EnvironmentSignal:
+        if not self._activity or self.executed or self._started_action is not None:
+            raise ValueError("activity must be configured and started only once")
+        if action.kind != "route" or action.target not in (*self.ROUTES, "defer"):
+            raise ValueError("invalid initial action")
+        self._started_action = action
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content="Dispatch activity started", semantic_tags=self.public_cues(),
+            metadata={"activity_state": "active", "source": "dispatch_start"})
+
+    def activity_step(self) -> EnvironmentSignal | None:
+        if self._started_action is None or self.executed:
+            raise RuntimeError("activity is not awaiting an intermediate observation")
+        if self._step_index >= len(self._steps):
+            return None
+        step = self._steps[self._step_index]
+        self._step_index += 1
+        changes = dict(step.get("visible_updates", {}))
+        self.visible.update(changes)
+        # New public restrictions may tighten during execution but never lift.
+        self.prohibited = self.prohibited | frozenset(step.get("prohibited", ()))
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=str(step.get("content", "Intermediate activity observation")),
+            semantic_tags=self.public_cues(),
+            metadata={"activity_state": "active", "source": str(step.get("source", "process")),
+                      "elapsed": float(step.get("elapsed", 1.0)),
+                      "visible_updates": changes, "prohibited": tuple(self.prohibited)})
+
+    def goal_evidence_step(self) -> EnvironmentSignal | None:
+        if not self.executed or not self._activity:
+            raise RuntimeError("verification requires a finished activity")
+        if self._check_index >= len(self._checks):
+            return None
+        check = self._checks[self._check_index]
+        self._check_index += 1
+        # A verified observation is independent of the mechanical action
+        # outcome; no truth label or private rule reaches the learner.
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=str(check.get("content", "Independent goal observation")),
+            semantic_tags=self.public_cues(),
+            metadata={"goal_check": {
+                "requirement": check["requirement"], "satisfied": check["satisfied"],
+                "source": check["source"], "final": bool(check.get("final", False))},
+                "elapsed": float(check.get("elapsed", 1.0))})
 
     # -- evaluation only: never delivered to cognition -----------------------------
     def counterfactual_truth(self, procedure: str) -> bool:

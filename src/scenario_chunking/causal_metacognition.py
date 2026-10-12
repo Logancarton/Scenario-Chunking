@@ -27,6 +27,7 @@ import json
 import math
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import pickle
 import random
 import statistics
@@ -319,6 +320,12 @@ class InvestigativeRun(CausalRun):
         self.policy_rng = random.Random(f"e12-random-investigation:{seed}")
         self.inspection_kappa = INSPECTION_EXPLORATION
 
+    def _calibrate_for(self, scope):
+        """Reconstruct any calibration callback from its durable owner after restart."""
+        return (lambda procedure, familiarity, probability:
+                self.learner.control.calibrate(scope, procedure, familiarity, probability)
+                ) if self.policy.trust else None
+
     # -- policy-specific inspection incentives (never knowledge, never permission) --
     def _inspection_incentives(self, state, actions, scope, *, learn: bool, forced: list[str]) -> tuple[dict, dict]:
         """Return (value overrides, exploration spec) for inspection candidates."""
@@ -359,9 +366,13 @@ class InvestigativeRun(CausalRun):
             seed=self.seed, family=family, index=epoch * 1000000 + index, visible=case["visible"],
             hidden=case["hidden"], domains={a: HIDDEN[a] for a in case["hidden"]},
             truths=case["truths"], noise=case["noise"], inspect_costs=case["inspect_costs"],
-            stakes=case["stakes"], prohibited=case["prohibited"], defer_value=DEFER, epoch=epoch)
+            stakes=case["stakes"], prohibited=case["prohibited"], defer_value=DEFER,
+            epoch=epoch, activity=case.get("activity"))
         state = CognitiveState(f"e12m:{self.seed}:{family}:{epoch}:{index}", goal_id="investigative_dispatch")
         state.thought_key = "dispatch:" + family
+        if case.get("activity"):
+            state.begin_goal_activity(
+                f"dispatch:{family}:{epoch}:{index}", case["activity"]["requirements"])
         now = self.clock.advance(elapsed=case.get("elapsed", 1.0))
         constraints = world.public_constraints()
         constraints["budget"] = 0 if self.policy.inspect == "none" else len(constraints["hidden"])
@@ -375,9 +386,7 @@ class InvestigativeRun(CausalRun):
         hits, stats = self.router.retrieve(state.retrieval_query())
         scope = self.learner.causal_scope(start)
         permitted = frozenset(p for p in ("standard", "express") if p not in state.prohibited)
-        control = self.learner.control
-        calibrate = ((lambda p, fam, q: control.calibrate(scope, p, fam, q))
-                     if self.policy.trust else None)
+        calibrate = self._calibrate_for(scope)
         forced = self._forced_random(case, list(constraints["hidden"]), learn)
         inspections, greedy, analyses, option_costs, cpu = [], [], [], None, process_time()
         while True:
@@ -399,7 +408,7 @@ class InvestigativeRun(CausalRun):
                                               horizon=case["horizon"])
                 target = behavior if behavior in permitted else "defer"
                 decision = next(a for a in actions if a.kind == "route" and a.target == target)
-                decision = type("Behavior", (), {"action": decision})()
+                decision = SimpleNamespace(action=decision)
                 break
             primitive = world.public_cues()
             state.incremental_context(primitive, now)
@@ -463,20 +472,132 @@ class InvestigativeRun(CausalRun):
             chosen = decision.action
         attempt = self._event(state, kind=EventKind.ACTION, status=TruthStatus.ATTEMPT,
                               content="Dispatch " + chosen.label, tags=primitive, action=chosen)
-        observed = world.execute(chosen)
+        activity = bool(case.get("activity"))
+        if activity:
+            signal = world.begin_activity(chosen)
+            event = self._event(state, kind=EventKind.OBSERVATION, status=TruthStatus.FACT,
+                                content=signal.content, tags=signal.semantic_tags,
+                                metadata=signal.metadata)
+            state.observe_activity_progress(event_id=event.event_id, occurred_at=now,
+                                            observed_at=now, description=signal.content)
+            observed = None
+        else:
+            observed = world.execute(chosen)
         return {"case": case, "world": world, "state": state, "start": start, "primitive": primitive,
                 "learner_cues": primitive, "constraints": constraints, "permitted": permitted,
                 "hits": hits, "stats": stats, "analyses": analyses, "greedy": greedy,
                 "inspections": inspections, "decision": decision, "chosen": chosen,
                 "stage_a": stage_a, "attempt": attempt, "observed": observed, "acted_at": now,
-                "learn": learn, "scope": scope, "calibrate": calibrate,
-                "decision_cpu": process_time() - cpu}
+                "learn": learn, "scope": scope,
+                "decision_cpu": process_time() - cpu,
+                "activity": activity, "activity_revisions": 0, "activity_reassessments": 0}
+
+    def advance_activity(self, pending: dict) -> dict:
+        """One observed execution step through existing owners; no fake 'think' action."""
+        if not pending.get("activity") or pending["observed"] is not None:
+            raise ValueError("no unfinished activity")
+        state, world = pending["state"], pending["world"]
+        signal = world.activity_step()
+        if signal is None:
+            pending["observed"] = world.execute(pending["chosen"])
+            pending["outcome_occurred_at"] = self.clock.now
+            state.execution_status = "mechanically_finished"
+            state.goal_status = "awaiting_verification"
+            return {"phase": "action_outcome_pending", "goal_status": state.goal_status}
+        now = self.clock.advance(elapsed=signal.metadata["elapsed"])
+        previous_cues, old_forbidden = pending["primitive"], state.prohibited
+        event = self._event(state, kind=EventKind.OBSERVATION, status=TruthStatus.FACT,
+                            content=signal.content, tags=signal.semantic_tags,
+                            metadata=signal.metadata)
+        state.apply_signal(signal, event_id=event.event_id)
+        state.observe_activity_progress(event_id=event.event_id, occurred_at=now,
+                                        observed_at=now, description=signal.content)
+        state.authorize(signal.metadata["prohibited"])
+        primitive = world.public_cues()
+        state.incremental_context(primitive, now)
+        pending["primitive"] = primitive
+        pending["learner_cues"] = primitive
+        changed = primitive != previous_cues or state.prohibited != old_forbidden
+        if changed:
+            constraints = world.public_constraints()
+            permitted = frozenset(p for p in ("standard", "express") if p not in state.prohibited)
+            actions = [a for a in state.candidate_actions() if a.kind == "route"]
+            analysis = self.interpreter.investigation_values(
+                primitive, actions, constraints=constraints, permitted=permitted,
+                calibrate=self._calibrate_for(pending["scope"]))
+            values, predictions = dict(analysis["values"]), analysis["predictions"]
+            decision = self.selector.select(
+                state, actions, pending["hits"], refine=True,
+                transfer_scores={k: v / 2 for k, v in values.items()},
+                transfer_context={"cognitive_mode": "incremental",
+                                  "candidate_values": values, "predictions": predictions,
+                                  "risk_price": 0.0, "reason": "mid_execution_reassessment"})
+            if decision.action.label != pending["chosen"].label:
+                pending["activity_revisions"] += 1
+                pending["chosen"] = decision.action
+                pending["attempt"] = self._event(
+                    state, kind=EventKind.ACTION, status=TruthStatus.ATTEMPT,
+                    content="Revised dispatch " + decision.action.label,
+                    tags=primitive, action=decision.action)
+            pending["analyses"].append(analysis)
+            pending["greedy"].append(max(
+                [k for k in ("route:standard", "route:express", "route:defer")
+                 if k == "route:defer" or k.split(":")[1] in permitted],
+                key=lambda k: (values[k], k == "route:defer")))
+            pending["decision"] = decision
+            pending["permitted"] = permitted
+            pending["constraints"] = constraints
+            pending["activity_reassessments"] += 1
+        return {"phase": "observed", "evidence_id": event.event_id,
+                "reassessed": changed, "action": pending["chosen"].label,
+                "goal_status": state.goal_status}
+
+    def verify_activity(self, pending: dict) -> dict | None:
+        """New independent evidence may arrive later, including after a restart."""
+        if not pending.get("activity") or pending["observed"] is None:
+            raise ValueError("no completed continuing activity")
+        signal = pending["world"].goal_evidence_step()
+        if signal is None:
+            return None
+        now = self.clock.advance(elapsed=signal.metadata["elapsed"])
+        state = pending["state"]
+        event = self._event(state, kind=EventKind.OBSERVATION, status=TruthStatus.FACT,
+                            content=signal.content, tags=signal.semantic_tags,
+                            metadata=signal.metadata)
+        state.apply_signal(signal, event_id=event.event_id)
+        status = state.verify_goal(signal, event_id=event.event_id,
+                                   occurred_at=now, observed_at=now)
+        return {"goal_status": status, "goal_complete": state.goal_complete,
+                "evidence_id": event.event_id, "source": signal.metadata["goal_check"]["source"]}
+
+    def step_case(self, case: dict, *, learn: bool = True,
+                  behavior: str | None = None) -> dict:
+        """Opt-in end-to-end activity through the same E12 live owners."""
+        if not case.get("activity"):
+            return super().step_case(case, learn=learn, behavior=behavior)
+        pending = self.act(case, learn=learn, behavior=behavior)
+        while pending["observed"] is None:
+            self.advance_activity(pending)
+        row = self.deliver(pending)
+        checks = []
+        while True:
+            evidence = self.verify_activity(pending)
+            if evidence is None:
+                break
+            checks.append(evidence)
+        row["verification_evidence"] = checks
+        row["goal_status_final"] = pending["state"].goal_status
+        row["goal_verified"] = pending["state"].goal_complete
+        return row
 
     def deliver(self, pending: dict) -> dict:
+        if pending.get("activity") and pending["observed"] is None:
+            raise ValueError("cannot deliver outcome before activity has finished")
         state, chosen, observed = pending["state"], pending["chosen"], pending["observed"]
         learn = pending["learn"]
         acquired = self.clock.now
-        delayed = acquired > pending["acted_at"]
+        outcome_at = pending.get("outcome_occurred_at", pending["acted_at"])
+        delayed = acquired > outcome_at
         if delayed:
             state.current_time = acquired
         cpu = process_time()
@@ -484,7 +605,7 @@ class InvestigativeRun(CausalRun):
                               content=observed.content, tags=observed.semantic_tags,
                               outcome=observed.outcome, cause=pending["attempt"].event_id,
                               reward=observed.reward, metadata=observed.metadata,
-                              occurred=pending["acted_at"] if delayed else None)
+                              occurred=outcome_at if delayed else None)
         state.apply_signal(observed, event_id=outcome.event_id)
         state.record_action(chosen)
         procedure = chosen.target
@@ -516,8 +637,13 @@ class InvestigativeRun(CausalRun):
                     appraisal, relevance=self.policy.explore == "learned",
                     trust=self.policy.trust, diagnosis=self.policy.diagnosis)
         # Rows are returned to the harness, not retained: learned state stays bounded.
-        return self._measure(pending, outcome, update, appraisal, process,
-                             learn_cpu=process_time() - cpu)
+        row = self._measure(pending, outcome, update, appraisal, process,
+                            learn_cpu=process_time() - cpu)
+        if pending.get("activity"):
+            row.update(goal_status=state.goal_status, goal_verified=state.goal_complete,
+                       activity_reassessments=pending["activity_reassessments"],
+                       activity_revisions=pending["activity_revisions"])
+        return row
 
     def _appraise(self, pending, outcome, success, prediction, now, gains) -> dict:
         """Hindsight with UPDATED knowledge, from the visible context the decision started in."""
@@ -526,7 +652,7 @@ class InvestigativeRun(CausalRun):
         if self.policy.explore == "learned":
             initial = dict(pending["constraints"])
             analysis = self.interpreter.decision_analysis(
-                start, constraints=initial, permitted=pending["permitted"], calibrate=pending["calibrate"])
+                start, constraints=initial, permitted=pending["permitted"], calibrate=self._calibrate_for(pending["scope"]))
             hindsight = {axis: {"voi": voi, "cost": initial["hidden"][axis],
                                 "competence": self.learner.competence(start, axis)}
                          for axis, voi in analysis["voi"].items()}
@@ -888,9 +1014,12 @@ def analyze(results: list[dict], seeds, conditions, *, reference="metacognitive"
 
 
 def _map(jobs, workers):
-    if workers == 1:
+    """Sequential by default; parallel research must be requested explicitly."""
+    if workers is None or workers == 1:
         return [run_seed(j) for j in jobs]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(run_seed, jobs))
 
 
@@ -954,8 +1083,13 @@ def run_transfer_job(job: tuple) -> list[dict]:
 def run_transfer(*, seeds=DEV_SEEDS, conditions=TRANSFER_CONDITIONS, per_source=PER_FAMILY,
                  workers=None) -> dict:
     jobs = [(s, rel, m, per_source) for s in seeds for rel in TRANSFER_TARGETS for m in conditions]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
-        rows = [r for batch in pool.map(run_transfer_job, jobs) for r in batch]
+    if workers is None or workers == 1:
+        rows = [r for job in jobs for r in run_transfer_job(job)]
+    else:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            rows = [r for batch in pool.map(run_transfer_job, jobs) for r in batch]
     report = {"seeds": list(seeds), "conditions": list(conditions), "targets": TRANSFER_TARGETS,
               "curves": {}, "training": {}, "paired": {}}
     for rel in TRANSFER_TARGETS:
@@ -1043,8 +1177,13 @@ def run_longitudinal_job(job: tuple) -> dict:
 def run_longitudinal(*, seeds=DEV_SEEDS, conditions=LONGITUDINAL_CONDITIONS, workers=None,
                      restart_at: int = 480) -> dict:
     jobs = [(s, m, restart_at if m == "metacognitive" else None) for s in seeds for m in conditions]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
-        results = list(pool.map(run_longitudinal_job, jobs))
+    if workers is None or workers == 1:
+        results = [run_longitudinal_job(job) for job in jobs]
+    else:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(run_longitudinal_job, jobs))
     rows = [r for res in results for r in res["rows"]]
     steps = sorted({r["step"] for r in rows if r["stage"] == "heldout"})
     timeline = {}
@@ -1139,8 +1278,13 @@ def run_option_job(job: tuple) -> list[dict]:
 
 def run_options(*, seeds=DEV_SEEDS, n_train=240, n_eval=240, workers=None) -> dict:
     jobs = [(s, n_train, n_eval) for s in seeds]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
-        rows = [r for batch in pool.map(run_option_job, jobs) for r in batch]
+    if workers is None or workers == 1:
+        rows = [r for job in jobs for r in run_option_job(job)]
+    else:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            rows = [r for batch in pool.map(run_option_job, jobs) for r in batch]
     held = [r for r in rows if r["stage"] == "heldout"]
     summary = {m: {"expected_reward": statistics.mean(r["expected_reward"] for r in sel),
                    "express_share": statistics.mean(r["action"] == "express" for r in sel),
@@ -1184,5 +1328,14 @@ def write_study(study: str, seed_set: str, output: str | None = None) -> dict:
 
 if __name__ == "__main__":
     import sys
-    study, seed_set = (sys.argv[1:] + ["benchmark", "dev"])[:2]
-    write_study(study, seed_set)
+    if len(sys.argv) == 1:
+        # A laptop-safe diagnostic. Historical dev/final studies require an explicit command.
+        report, results = run_benchmark(
+            seeds=DEV_SEEDS[:1], conditions=("no_investigation", "metacognitive"),
+            workers=1, per_family=8, checkpoints=(8,))
+        _write(Path("results-e12-metacognition/smoke"), report, results)
+        print(json.dumps({"smoke": True, "seeds": report["seeds"],
+                          "conditions": report["conditions"]}, sort_keys=True))
+    else:
+        study, seed_set = (sys.argv[1:] + ["benchmark", "dev"])[:2]
+        write_study(study, seed_set)

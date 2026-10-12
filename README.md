@@ -527,3 +527,29 @@ python -m scenario_chunking.causal_representation                  # add "final"
 ```
 
 Committed summary: `docs/e12_metacognition_summary.json`. Passing tests and CI do not establish general cognition; these are bounded synthetic results.
+
+
+### Resource-safe Experiment 12 execution
+
+Normal laptop execution is **sequential by default**. Running
+`python -m scenario_chunking.causal_metacognition` executes a small deterministic
+smoke case (one development seed, two conditions, eight experiences per family),
+not the eight-condition development benchmark or the 40-seed final experiment.
+Running `python -m scenario_chunking.causal_representation` likewise executes a
+single development seed/world/learner (historical representation checkpoints
+remain unchanged). Full research requires explicit `benchmark dev`, `benchmark
+final`, `representation dev`, or `representation final` arguments as relevant.
+Programmatic callers may opt into process parallelism with `workers=2` or
+another explicit positive count; `workers=None` means one worker. Full studies
+still require substantial CPU, time, and memory, even sequentially. These are
+research-harness safeguards, **not demonstrated gains in Sonara cognition**.
+
+The legacy E12 module `python -m scenario_chunking.causal_experiment` also
+runs only a two-treatment, one-family smoke case by default. Pass `full`
+explicitly to reproduce the historical three-part E12 gate. These opt-ins
+change execution defaults only; they do not change any archived benchmark.
+
+The E12 challenge and prediction-to-decision diagnostic modules also default to
+small sequential smoke cases, not implicit multi-process final studies. Specify
+`dev` or `final` explicitly for larger runs; programmatic `workers=2` or
+higher remains available for deliberate parallel evaluation.

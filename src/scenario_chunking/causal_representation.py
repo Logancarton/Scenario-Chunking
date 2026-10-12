@@ -186,10 +186,12 @@ def _plateau(values: list[float]) -> float:
 def run_study(*, seeds=DEV_SEEDS, worlds=WORLDS, diversities=DIVERSITY, learners=LEARNERS,
               workers: int | None = None) -> dict:
     jobs = [(w, s, d, l) for w in worlds for s in seeds for d in diversities for l in learners]
-    if workers == 1:
+    if workers is None or workers == 1:
         results = [run_job(j) for j in jobs]
     else:
-        with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(run_job, jobs, chunksize=2))
     summary = {}
     for w in worlds:
@@ -229,6 +231,14 @@ def write_study(output="results-e12-metacognition/representation", **kwargs) -> 
 
 if __name__ == "__main__":
     import sys
-    seeds = FINAL_SEEDS if sys.argv[1:] == ["final"] else DEV_SEEDS
-    write_study(f"results-e12-metacognition/representation-{'final' if seeds == FINAL_SEEDS else 'dev'}",
-                seeds=seeds)
+    if len(sys.argv) == 1:
+        # A single seed/world/learner by default; full dev/final requires an explicit opt-in.
+        write_study("results-e12-metacognition/representation-smoke",
+                    seeds=DEV_SEEDS[:1], worlds=WORLDS[:1],
+                    diversities=DIVERSITY[:1], learners=("unified",), workers=1)
+    else:
+        if sys.argv[1:] not in (["dev"], ["final"]):
+            raise SystemExit("usage: python -m scenario_chunking.causal_representation [dev|final]")
+        seeds = FINAL_SEEDS if sys.argv[1] == "final" else DEV_SEEDS
+        write_study(f"results-e12-metacognition/representation-{sys.argv[1]}",
+                    seeds=seeds, workers=1)
