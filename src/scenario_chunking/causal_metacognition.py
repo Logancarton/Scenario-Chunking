@@ -389,10 +389,10 @@ class InvestigativeRun(CausalRun):
         calibrate = self._calibrate_for(scope)
         forced = self._forced_random(case, list(constraints["hidden"]), learn)
         inspections, greedy, analyses, option_costs, cpu = [], [], [], None, process_time()
+        primitive = start  # First public cues were already acquired and installed in state.
         while True:
             if behavior is not None:
                 # Matched evidence: a fixed, learner-independent policy acts (no inspection).
-                primitive = world.public_cues()
                 actions = state.candidate_actions()
                 analysis = self.interpreter.investigation_values(
                     primitive, actions, constraints=constraints, permitted=permitted, calibrate=calibrate)
@@ -410,8 +410,6 @@ class InvestigativeRun(CausalRun):
                 decision = next(a for a in actions if a.kind == "route" and a.target == target)
                 decision = SimpleNamespace(action=decision)
                 break
-            primitive = world.public_cues()
-            state.incremental_context(primitive, now)
             actions = state.candidate_actions()
             analysis = self.interpreter.investigation_values(
                 primitive, actions, constraints=constraints, permitted=permitted, calibrate=calibrate)
@@ -449,6 +447,8 @@ class InvestigativeRun(CausalRun):
                         content=signal.content, tags=primitive | signal.semantic_tags,
                         reward=signal.reward, metadata=signal.metadata)
             state.reveal(axis, value)
+            primitive = world.public_cues()
+            state.incremental_context(primitive, now)
             if learn:
                 self.learner.observe_variable(primitive, f"pair:{axis}:{value}")
             inspections.append({"axis": axis, "value": value, "cost": signal.metadata["cost"],
