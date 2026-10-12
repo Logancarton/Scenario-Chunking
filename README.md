@@ -527,3 +527,19 @@ python -m scenario_chunking.causal_representation                  # add "final"
 ```
 
 Committed summary: `docs/e12_metacognition_summary.json`. Passing tests and CI do not establish general cognition; these are bounded synthetic results.
+
+
+### Resource-safe Experiment 12 execution
+
+Normal laptop execution is **sequential by default**. Running
+`python -m scenario_chunking.causal_metacognition` executes a small deterministic
+smoke case (one development seed, two conditions, eight experiences per family),
+not the eight-condition development benchmark or the 40-seed final experiment.
+Running `python -m scenario_chunking.causal_representation` likewise executes a
+single development seed/world/learner (historical representation checkpoints
+remain unchanged). Full research requires explicit `benchmark dev`, `benchmark
+final`, `representation dev`, or `representation final` arguments as relevant.
+Programmatic callers may opt into process parallelism with `workers=2` or
+another explicit positive count; `workers=None` means one worker. Full studies
+still require substantial CPU, time, and memory, even sequentially. These are
+research-harness safeguards, **not demonstrated gains in Sonara cognition**.

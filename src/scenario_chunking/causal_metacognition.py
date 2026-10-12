@@ -888,9 +888,12 @@ def analyze(results: list[dict], seeds, conditions, *, reference="metacognitive"
 
 
 def _map(jobs, workers):
-    if workers == 1:
+    """Sequential by default; parallel research must be requested explicitly."""
+    if workers is None or workers == 1:
         return [run_seed(j) for j in jobs]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(run_seed, jobs))
 
 
@@ -954,8 +957,13 @@ def run_transfer_job(job: tuple) -> list[dict]:
 def run_transfer(*, seeds=DEV_SEEDS, conditions=TRANSFER_CONDITIONS, per_source=PER_FAMILY,
                  workers=None) -> dict:
     jobs = [(s, rel, m, per_source) for s in seeds for rel in TRANSFER_TARGETS for m in conditions]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
-        rows = [r for batch in pool.map(run_transfer_job, jobs) for r in batch]
+    if workers is None or workers == 1:
+        rows = [r for job in jobs for r in run_transfer_job(job)]
+    else:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            rows = [r for batch in pool.map(run_transfer_job, jobs) for r in batch]
     report = {"seeds": list(seeds), "conditions": list(conditions), "targets": TRANSFER_TARGETS,
               "curves": {}, "training": {}, "paired": {}}
     for rel in TRANSFER_TARGETS:
@@ -1043,8 +1051,13 @@ def run_longitudinal_job(job: tuple) -> dict:
 def run_longitudinal(*, seeds=DEV_SEEDS, conditions=LONGITUDINAL_CONDITIONS, workers=None,
                      restart_at: int = 480) -> dict:
     jobs = [(s, m, restart_at if m == "metacognitive" else None) for s in seeds for m in conditions]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
-        results = list(pool.map(run_longitudinal_job, jobs))
+    if workers is None or workers == 1:
+        results = [run_longitudinal_job(job) for job in jobs]
+    else:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(run_longitudinal_job, jobs))
     rows = [r for res in results for r in res["rows"]]
     steps = sorted({r["step"] for r in rows if r["stage"] == "heldout"})
     timeline = {}
@@ -1139,8 +1152,13 @@ def run_option_job(job: tuple) -> list[dict]:
 
 def run_options(*, seeds=DEV_SEEDS, n_train=240, n_eval=240, workers=None) -> dict:
     jobs = [(s, n_train, n_eval) for s in seeds]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
-        rows = [r for batch in pool.map(run_option_job, jobs) for r in batch]
+    if workers is None or workers == 1:
+        rows = [r for job in jobs for r in run_option_job(job)]
+    else:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            rows = [r for batch in pool.map(run_option_job, jobs) for r in batch]
     held = [r for r in rows if r["stage"] == "heldout"]
     summary = {m: {"expected_reward": statistics.mean(r["expected_reward"] for r in sel),
                    "express_share": statistics.mean(r["action"] == "express" for r in sel),
@@ -1184,5 +1202,14 @@ def write_study(study: str, seed_set: str, output: str | None = None) -> dict:
 
 if __name__ == "__main__":
     import sys
-    study, seed_set = (sys.argv[1:] + ["benchmark", "dev"])[:2]
-    write_study(study, seed_set)
+    if len(sys.argv) == 1:
+        # A laptop-safe diagnostic. Historical dev/final studies require an explicit command.
+        report, results = run_benchmark(
+            seeds=DEV_SEEDS[:1], conditions=("no_investigation", "metacognitive"),
+            workers=1, per_family=8, checkpoints=(8,))
+        _write(Path("results-e12-metacognition/smoke"), report, results)
+        print(json.dumps({"smoke": True, "seeds": report["seeds"],
+                          "conditions": report["conditions"]}, sort_keys=True))
+    else:
+        study, seed_set = (sys.argv[1:] + ["benchmark", "dev"])[:2]
+        write_study(study, seed_set)

@@ -1291,3 +1291,17 @@ control at the same sparse top-K and distractor budget. Run the identical-seed
 six-scenario benchmark plus adversarial controls; publish measured detailed
 memory operations, latency, active counts, reactivations, action choices and
 negative results. Do not promote to Sonara without live behavioral evidence.
+
+
+### Experiment 12 — local resource safety follow-up (2026-10-12)
+
+The PR #10 runner implicitly created as many as eight CPU-bound processes when
+workers was omitted. The default launch also selected large development studies.
+This infrastructure change makes `workers=None` strictly sequential across
+E12 causal, metacognitive and representation runners; explicit positive worker
+counts preserve opt-in parallel experiments. No-argument metacognition and
+representation entrypoints select deterministic smaller smoke cases. Historic
+study conditions, algorithms, and frozen results are not redefined. Tests check
+that implicit pool creation is forbidden. This is **supporting infrastructure**,
+not a claim that learning, sparse cognition, execution monitoring, or transfer
+has improved. Full replication and independent cognitive evaluation remain required.

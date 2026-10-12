@@ -416,9 +416,11 @@ def _execute(job: tuple) -> list[dict]:
 
 
 def _map_jobs(jobs: list[tuple], workers: int | None) -> list[list[dict]]:
-    if workers == 1 or len(jobs) == 1:
+    if workers is None or workers == 1 or len(jobs) == 1:
         return [_execute(job) for job in jobs]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(_execute, jobs))
 
 
