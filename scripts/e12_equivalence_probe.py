@@ -72,7 +72,7 @@ def observe(seed, mode):
     cases = case_batch(seed)
     rows = []
     for case in cases:
-        pending = run.act(case)
+        pending = run.act(case, learn=not bool(case.get("activity")))
         if pending.get("activity"):
             while pending["observed"] is None:
                 run.advance_activity(pending)
