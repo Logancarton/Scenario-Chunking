@@ -117,7 +117,8 @@ class MeaningInterpreter:
     ROUTES = ("standard", "express")
 
     def decision_analysis(self, cues: frozenset[str], *, constraints: dict,
-                          permitted: frozenset[str], calibrate=None) -> dict:
+                          permitted: frozenset[str], calibrate=None,
+                          active_axes: frozenset[str] | None = None) -> dict:
         """E12 investigation valuation from the one learner's CURRENT beliefs only.
 
         V(route) = p * gain - (1 - p) * loss - cost with public stakes, so the
@@ -131,8 +132,13 @@ class MeaningInterpreter:
         """
         stakes, defer = constraints["stakes"], float(constraints["defer_value"])
         unknown = sorted(l.split(":", 2)[1] for l in cues if l.startswith("pair:") and l.endswith(":?"))
+        # When all routes are prohibited, inspecting cannot improve the sole
+        # permitted final choice (defer). Keep live route predictions but avoid
+        # computing counterfactual contexts that cannot change the decision.
+        eligible = ([axis for axis in unknown if active_axes is None or axis in active_axes]
+                    if permitted else [])
         queries, index = [cues], {}
-        for axis in unknown:
+        for axis in eligible:
             for value in constraints["domains"][axis]:
                 index[(axis, value)] = len(queries)
                 queries.append((cues - {f"pair:{axis}:?"}) | {f"pair:{axis}:{value}"})
@@ -148,11 +154,12 @@ class MeaningInterpreter:
         def best(i):
             return max([table[p][i][1] for p in finals] + [defer])
         voi = {}
-        for axis in unknown:
+        for axis in eligible:
             dist = self.learner.variable_distribution(cues, axis, constraints["domains"][axis])
             informed = sum(dist[v] * best(index[(axis, v)]) for v in dist)
             now = max([sum(dist[v] * table[p][index[(axis, v)]][1] for v in dist) for p in finals] + [defer])
             voi[axis] = round(max(0.0, informed - now), 9)
+        voi.update({axis: 0.0 for axis in unknown if axis not in voi})
         values = {"route:" + p: table[p][0][1] for p in self.ROUTES}
         values["route:defer"] = defer
         predictions = {}
@@ -167,14 +174,15 @@ class MeaningInterpreter:
                 "unknown": unknown, "belief_queries": len(queries) * len(self.ROUTES)}
 
     def investigation_values(self, cues: frozenset[str], actions: list[Action], *,
-                             constraints: dict, permitted: frozenset[str], calibrate=None) -> dict:
+                             constraints: dict, permitted: frozenset[str], calibrate=None,
+                          active_axes: frozenset[str] | None = None) -> dict:
         """Translate beliefs into values for every candidate, including inspection.
 
         Inspecting X is valued as deciding now plus the information value of X
         minus its public cost; the selector compares it with acting directly.
         """
         analysis = self.decision_analysis(cues, constraints=constraints, permitted=permitted,
-                                          calibrate=calibrate)
+                                          calibrate=calibrate, active_axes=active_axes)
         values, predictions = dict(analysis["values"]), dict(analysis["predictions"])
         for action in actions:
             if action.kind == "inspect":

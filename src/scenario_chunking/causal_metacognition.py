@@ -269,6 +269,8 @@ class Policy:
     option: bool = False       # price the future use of a scarce option
     exploration_gain: float | None = None   # initial process disposition (None: model default)
     competence_scale: float | None = None
+    activation: str = "dense"  # dense | fixed_sparse | learned_sparse
+    activation_limit: int = 2  # counterfactual variable axes per episode
 
     @property
     def process(self) -> bool:
@@ -388,14 +390,20 @@ class InvestigativeRun(CausalRun):
         permitted = frozenset(p for p in ("standard", "express") if p not in state.prohibited)
         calibrate = self._calibrate_for(scope)
         forced = self._forced_random(case, list(constraints["hidden"]), learn)
+        active_axes = self.learner.control.activate_axes(
+            scope, constraints["hidden"], mode=self.policy.activation,
+            limit=self.policy.activation_limit, experience=self.clock.experiences)
         inspections, greedy, analyses, option_costs, cpu = [], [], [], None, process_time()
+        primitive = start  # First public cues were already acquired and installed in state.
         while True:
             if behavior is not None:
                 # Matched evidence: a fixed, learner-independent policy acts (no inspection).
-                primitive = world.public_cues()
                 actions = state.candidate_actions()
+                if self.policy.activation != "dense":
+                    actions = [a for a in actions if a.kind != "inspect" or a.target in active_axes]
                 analysis = self.interpreter.investigation_values(
-                    primitive, actions, constraints=constraints, permitted=permitted, calibrate=calibrate)
+                    primitive, actions, constraints=constraints, permitted=permitted,
+                    calibrate=calibrate, active_axes=active_axes)
                 analyses.append(analysis)
                 values, predictions = dict(analysis["values"]), analysis["predictions"]
                 greedy.append(max([p for p in values if p.startswith("route:") and
@@ -410,11 +418,12 @@ class InvestigativeRun(CausalRun):
                 decision = next(a for a in actions if a.kind == "route" and a.target == target)
                 decision = SimpleNamespace(action=decision)
                 break
-            primitive = world.public_cues()
-            state.incremental_context(primitive, now)
             actions = state.candidate_actions()
+            if self.policy.activation != "dense":
+                actions = [a for a in actions if a.kind != "inspect" or a.target in active_axes]
             analysis = self.interpreter.investigation_values(
-                primitive, actions, constraints=constraints, permitted=permitted, calibrate=calibrate)
+                primitive, actions, constraints=constraints, permitted=permitted,
+                calibrate=calibrate, active_axes=active_axes)
             analyses.append(analysis)
             values, predictions = dict(analysis["values"]), analysis["predictions"]
             finals = [p for p in ("route:standard", "route:express", "route:defer")
@@ -449,6 +458,8 @@ class InvestigativeRun(CausalRun):
                         content=signal.content, tags=primitive | signal.semantic_tags,
                         reward=signal.reward, metadata=signal.metadata)
             state.reveal(axis, value)
+            primitive = world.public_cues()
+            state.incremental_context(primitive, now)
             if learn:
                 self.learner.observe_variable(primitive, f"pair:{axis}:{value}")
             inspections.append({"axis": axis, "value": value, "cost": signal.metadata["cost"],
@@ -484,12 +495,13 @@ class InvestigativeRun(CausalRun):
         else:
             observed = world.execute(chosen)
         return {"case": case, "world": world, "state": state, "start": start, "primitive": primitive,
-                "learner_cues": primitive, "constraints": constraints, "permitted": permitted,
+                "learner_cues": primitive, "constraints": constraints, "initial_constraints": constraints, "permitted": permitted,
                 "hits": hits, "stats": stats, "analyses": analyses, "greedy": greedy,
                 "inspections": inspections, "decision": decision, "chosen": chosen,
                 "stage_a": stage_a, "attempt": attempt, "observed": observed, "acted_at": now,
                 "learn": learn, "scope": scope,
                 "decision_cpu": process_time() - cpu,
+                 "active_axes": tuple(sorted(active_axes)),
                 "activity": activity, "activity_revisions": 0, "activity_reassessments": 0}
 
     def advance_activity(self, pending: dict) -> dict:
@@ -649,15 +661,16 @@ class InvestigativeRun(CausalRun):
         """Hindsight with UPDATED knowledge, from the visible context the decision started in."""
         hindsight = {}
         start, scope = pending["start"], pending["scope"]
+        original_constraints = pending["initial_constraints"]
         if self.policy.explore == "learned":
-            initial = dict(pending["constraints"])
+            initial = dict(original_constraints)
             analysis = self.interpreter.decision_analysis(
                 start, constraints=initial, permitted=pending["permitted"], calibrate=self._calibrate_for(pending["scope"]))
             hindsight = {axis: {"voi": voi, "cost": initial["hidden"][axis],
                                 "competence": self.learner.competence(start, axis)}
                          for axis, voi in analysis["voi"].items()}
         unexplained = (self.learner.unexplained_variability(
-            start, ("standard", "express"), project_out=frozenset(pending["constraints"]["hidden"]))
+            start, ("standard", "express"), project_out=frozenset(original_constraints["hidden"]))
             if self.policy.diagnosis else 0.0)
         chosen = pending["chosen"]
         record = {"evidence_id": outcome.event_id, "scope": scope,
@@ -670,7 +683,7 @@ class InvestigativeRun(CausalRun):
                   "effort": {"belief_queries": sum(a["belief_queries"] for a in pending["analyses"]),
                              "inspections": len(pending["inspections"])}}
         association = ({axis: self.learner.variable_association(start, axis, ("standard", "express"))
-                        for axis in sorted(pending["constraints"]["hidden"])}
+                        for axis in sorted(original_constraints["hidden"])}
                        if self.policy.explore == "learned" else {})
         return self.refiner.appraise_process(pending["state"], record=record, hindsight=hindsight,
                                              unexplained=unexplained, now=now, information_gain=gains,
@@ -687,7 +700,7 @@ class InvestigativeRun(CausalRun):
         first = pending["analyses"][0]
         immediate = pending["greedy"][0].split(":")[1]
         signals = {"max_net_information_value": max(
-                       [v - pending["constraints"]["hidden"][a] for a, v in first["voi"].items()] or [0.0]),
+                       [v - pending["initial_constraints"]["hidden"][a] for a, v in first["voi"].items()] or [0.0]),
                    "immediate_confidence": first["predictions"].get(pending["greedy"][0], {}).get("probability", 1.0),
                    "immediate_uncertainty": first["predictions"].get(pending["greedy"][0], {}).get("uncertainty", 0.0),
                    "immediate_familiarity": first["predictions"].get(pending["greedy"][0], {}).get("familiarity", 0)}
