@@ -487,7 +487,7 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e ".[test]"
       - name: Sparse activation ownership, work saving, recovery and safety
-        run: python -m pytest -q tests/test_e12_sparse_activation.py
+        run: python -m pytest -q tests/test_e12_sparse_activation.py tests/test_e12_disagreement_audit.py
       - name: Pinned original-main versus candidate complete trajectories
         env:
           E12_PINNED_MAIN: 71473242f354ad7b82e9939a72539142f4dd0be3
@@ -540,6 +540,7 @@ jobs:
           assert all(s["violations"] == 0 for s in r["summary"].values())
           assert r["summary"]["fixed_sparse:heldout_delivery"]["mean_active_axes"] == 2
           PYTHON
+          python scripts/e12_disagreement_audit.py results-e12-sparsity-smoke.json --max-seeds 1 --max-cases 3 --output results-e12-disagreement-smoke.json
       - name: Compile and diff check
         run: |
           python -m compileall -q src tests scripts
@@ -548,5 +549,7 @@ jobs:
         if: always()
         with:
           name: e12-sparsity-audit
-          path: results-e12-sparsity-smoke.json
+          path: |
+            results-e12-sparsity-smoke.json
+            results-e12-disagreement-smoke.json
           if-no-files-found: ignore
