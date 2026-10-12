@@ -156,8 +156,13 @@ def main():
     with open(a.output, "w", encoding="utf-8") as h:
         json.dump(report, h, indent=2, sort_keys=True)
     print(json.dumps({"status": report["status"], "seeds": len(seeds),
-                      "paired_comparisons": diffs, "safety_violations": sum(
-                          v["violations"] for v in rows.values())}, indent=2))
+                      "paired_comparisons": diffs,
+                      "adaptive_mean_recovery": rows["adaptive_sparse:delivery"]["recovery_attempts"],
+                      "adaptive_mean_reward": rows["adaptive_sparse:delivery"]["mean_reward"],
+                      "fixed_mean_reward": rows["fixed_sparse:delivery"]["mean_reward"],
+                      "adaptive_extra_queries": rows["adaptive_sparse:delivery"]["recovery_extra_queries"],
+                      "safety_violations": sum(v["violations"] for v in rows.values())},
+                     indent=2))
 
 
 if __name__ == "__main__":

@@ -143,6 +143,17 @@ class CognitiveControl:
         benefit = ((0.48 * uncertainty + 0.35 * ambiguity +
                     0.25 * self.drive.get(scope, 0.0)) *
                    (0.15 + relevance) * (1.0 - competences.get(axis, 0.0)))
+        # Repeated probes that failed to change a decision or produce new
+        # observations are process evidence about wasted THINKING, not world
+        # evidence that the omitted variable is irrelevant.
+        unproductive = sum(
+            1 for entry in self.adjustments
+            if tuple(entry.get("scope", ())) == scope
+            for observation in [entry.get("reasoning") or {}]
+            for trial in [observation.get("recovery")]
+            if trial and trial["axis"] == axis
+            and not (trial["changed_preferred_route"] or trial.get("led_to_inspection")))
+        benefit /= 1.0 + 0.6 * unproductive
         if benefit <= query_cost * 4:
             return None
         incumbent = min(active, key=lambda a: (self.reasoning_priority(

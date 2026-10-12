@@ -36,10 +36,11 @@ def test_live_recovery_costs_real_belief_queries_without_parallel_selector():
     assert row["belief_queries"] == (sum(a["belief_queries"] for a in pending["analyses"])
                                      + pending["recovery_extra_queries"])
     assert row["recovery_extra_queries"] >= 0
-    if row["recovery"] is not None:
-        assert row["recovery_extra_queries"] > 0
-        assert set(row["recovery"]["after"]) <= set(case["hidden"])
-        assert len(row["recovery"]["after"]) == 2
+    assert row["recovery"] is not None  # No manually injected diagnosis.
+    assert row["recovery"]["accepted"]
+    assert row["recovery_extra_queries"] > 0
+    assert set(row["recovery"]["after"]) <= set(case["hidden"])
+    assert len(row["recovery"]["after"]) == 2
     assert "reasoning" in row["process_updated"]
     assert "reasoning" in run.learner.control.adjustments[-1]
 

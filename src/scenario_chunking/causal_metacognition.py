@@ -738,7 +738,12 @@ class InvestigativeRun(CausalRun):
                   "effort": {"belief_queries": sum(a["belief_queries"] for a in pending["analyses"]),
                              "inspections": len(pending["inspections"])}}
         if self.policy.activation == "adaptive_sparse":
-            record["recovery"] = pending.get("recovery")
+            record["recovery"] = (dict(pending["recovery"])
+                                  if pending.get("recovery") else None)
+            if record["recovery"] is not None:
+                record["recovery"]["led_to_inspection"] = any(
+                    i["axis"] == record["recovery"]["axis"]
+                    for i in pending["inspections"])
             record["effort"]["belief_queries"] += pending["recovery_extra_queries"]
         association = ({axis: self.learner.variable_association(start, axis, ("standard", "express"))
                         for axis in sorted(original_constraints["hidden"])}
