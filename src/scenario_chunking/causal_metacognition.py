@@ -495,7 +495,7 @@ class InvestigativeRun(CausalRun):
         else:
             observed = world.execute(chosen)
         return {"case": case, "world": world, "state": state, "start": start, "primitive": primitive,
-                "learner_cues": primitive, "constraints": constraints, "permitted": permitted,
+                "learner_cues": primitive, "constraints": constraints, "initial_constraints": constraints, "permitted": permitted,
                 "hits": hits, "stats": stats, "analyses": analyses, "greedy": greedy,
                 "inspections": inspections, "decision": decision, "chosen": chosen,
                 "stage_a": stage_a, "attempt": attempt, "observed": observed, "acted_at": now,
