@@ -548,3 +548,8 @@ The legacy E12 module `python -m scenario_chunking.causal_experiment` also
 runs only a two-treatment, one-family smoke case by default. Pass `full`
 explicitly to reproduce the historical three-part E12 gate. These opt-ins
 change execution defaults only; they do not change any archived benchmark.
+
+The E12 challenge and prediction-to-decision diagnostic modules also default to
+small sequential smoke cases, not implicit multi-process final studies. Specify
+`dev` or `final` explicitly for larger runs; programmatic `workers=2` or
+higher remains available for deliberate parallel evaluation.

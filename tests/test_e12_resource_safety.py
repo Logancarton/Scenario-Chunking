@@ -34,3 +34,17 @@ def test_representation_defaults_to_inline(monkeypatch):
 def test_invalid_worker_counts_rejected(dispatcher):
     with pytest.raises(ValueError):
         dispatcher([("a",), ("b",)], 0)
+
+
+def test_diagnostic_defaults_to_inline(monkeypatch):
+    from scenario_chunking import causal_diagnostic as cd
+    monkeypatch.setattr(cd, "ProcessPoolExecutor", forbidden_pool)
+    monkeypatch.setattr(cd, "run_seed", lambda seed: {"seed": seed})
+    assert cd._map((11, 13), None) == [{"seed": 11}, {"seed": 13}]
+
+
+def test_challenges_defaults_to_inline(monkeypatch):
+    from scenario_chunking import causal_challenges as cc
+    monkeypatch.setattr(cc, "ProcessPoolExecutor", forbidden_pool)
+    result = cc.run_challenges(names=(), seeds=(), conditions=(), workers=None)
+    assert result["challenges"] == {}

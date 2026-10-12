@@ -610,9 +610,11 @@ def _costs(results, training, decisions) -> dict:
 
 
 def _map(seeds, workers):
-    if workers == 1 or len(seeds) == 1:
+    if workers is None or workers == 1 or len(seeds) == 1:
         return [run_seed(s) for s in seeds]
-    with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(run_seed, seeds))
 
 
@@ -741,8 +743,13 @@ def exploratory_calibration(dev_output: str, eval_output: str,
 
 if __name__ == "__main__":
     import sys
-    name = sys.argv[1] if len(sys.argv) > 1 else "dev"
-    summary = write_diagnostic("results-e12-diagnostic/" + name, SEED_SETS[name])
+    if len(sys.argv) == 1:
+        name, seeds = "smoke", DEV_SEEDS[:2]
+    elif sys.argv[1:] in (["dev"], ["final"]):
+        name, seeds = sys.argv[1], SEED_SETS[sys.argv[1]]
+    else:
+        raise SystemExit("usage: python -m scenario_chunking.causal_diagnostic [dev|final]")
+    summary = write_diagnostic("results-e12-diagnostic/" + name, seeds, workers=1)
     print(json.dumps(_jsonable({s: {"paired": {k: {m: v[m]["mean"] for m in ("expected_reward", "realized_reward")}
                                                for k, v in summary["streams"][s]["paired"].items()}}
                                 for s in summary["streams"]}), indent=2))

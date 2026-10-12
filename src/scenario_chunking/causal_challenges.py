@@ -332,10 +332,12 @@ def run_challenges(*, names=("exception", "delayed", "abrupt", "gradual", "no_ch
                    seeds=DEV_SEEDS, conditions=CHALLENGE_CONDITIONS, reference="explanation_full",
                    workers: int | None = None) -> dict:
     jobs = [(n, s, m) for n in names for s in seeds for m in conditions]
-    if workers == 1:
+    if workers is None or workers == 1:
         results = [run_challenge(j) for j in jobs]
     else:
-        with ProcessPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 1)) as pool:
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(run_challenge, jobs, chunksize=2))
     report = {"seeds": list(seeds), "conditions": list(conditions), "reference": reference,
               "challenges": {}}
@@ -381,4 +383,13 @@ def write_challenges(output="results-e12-unified/challenges", **kwargs) -> dict:
 
 
 if __name__ == "__main__":
-    write_challenges(seeds=FINAL_SEEDS)
+    import sys
+    if len(sys.argv) == 1:
+        write_challenges("results-e12-unified/challenges-smoke",
+                         names=("no_change",), seeds=DEV_SEEDS[:1],
+                         conditions=("explanation_full", "unified"), workers=1)
+    elif sys.argv[1:] in (["dev"], ["final"]):
+        write_challenges(
+            seeds=FINAL_SEEDS if sys.argv[1] == "final" else DEV_SEEDS, workers=1)
+    else:
+        raise SystemExit("usage: python -m scenario_chunking.causal_challenges [dev|final]")
