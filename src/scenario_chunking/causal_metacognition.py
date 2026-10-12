@@ -27,6 +27,7 @@ import json
 import math
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import pickle
 import random
 import statistics
@@ -319,6 +320,12 @@ class InvestigativeRun(CausalRun):
         self.policy_rng = random.Random(f"e12-random-investigation:{seed}")
         self.inspection_kappa = INSPECTION_EXPLORATION
 
+    def _calibrate_for(self, scope):
+        """Reconstruct any calibration callback from its durable owner after restart."""
+        return (lambda procedure, familiarity, probability:
+                self.learner.control.calibrate(scope, procedure, familiarity, probability)
+                ) if self.policy.trust else None
+
     # -- policy-specific inspection incentives (never knowledge, never permission) --
     def _inspection_incentives(self, state, actions, scope, *, learn: bool, forced: list[str]) -> tuple[dict, dict]:
         """Return (value overrides, exploration spec) for inspection candidates."""
@@ -379,9 +386,7 @@ class InvestigativeRun(CausalRun):
         hits, stats = self.router.retrieve(state.retrieval_query())
         scope = self.learner.causal_scope(start)
         permitted = frozenset(p for p in ("standard", "express") if p not in state.prohibited)
-        control = self.learner.control
-        calibrate = ((lambda p, fam, q: control.calibrate(scope, p, fam, q))
-                     if self.policy.trust else None)
+        calibrate = self._calibrate_for(scope)
         forced = self._forced_random(case, list(constraints["hidden"]), learn)
         inspections, greedy, analyses, option_costs, cpu = [], [], [], None, process_time()
         while True:
@@ -403,7 +408,7 @@ class InvestigativeRun(CausalRun):
                                               horizon=case["horizon"])
                 target = behavior if behavior in permitted else "defer"
                 decision = next(a for a in actions if a.kind == "route" and a.target == target)
-                decision = type("Behavior", (), {"action": decision})()
+                decision = SimpleNamespace(action=decision)
                 break
             primitive = world.public_cues()
             state.incremental_context(primitive, now)
@@ -483,7 +488,7 @@ class InvestigativeRun(CausalRun):
                 "hits": hits, "stats": stats, "analyses": analyses, "greedy": greedy,
                 "inspections": inspections, "decision": decision, "chosen": chosen,
                 "stage_a": stage_a, "attempt": attempt, "observed": observed, "acted_at": now,
-                "learn": learn, "scope": scope, "calibrate": calibrate,
+                "learn": learn, "scope": scope,
                 "decision_cpu": process_time() - cpu,
                 "activity": activity, "activity_revisions": 0, "activity_reassessments": 0}
 
@@ -519,7 +524,7 @@ class InvestigativeRun(CausalRun):
             actions = [a for a in state.candidate_actions() if a.kind == "route"]
             analysis = self.interpreter.investigation_values(
                 primitive, actions, constraints=constraints, permitted=permitted,
-                calibrate=pending["calibrate"])
+                calibrate=self._calibrate_for(pending["scope"]))
             values, predictions = dict(analysis["values"]), analysis["predictions"]
             decision = self.selector.select(
                 state, actions, pending["hits"], refine=True,
@@ -647,7 +652,7 @@ class InvestigativeRun(CausalRun):
         if self.policy.explore == "learned":
             initial = dict(pending["constraints"])
             analysis = self.interpreter.decision_analysis(
-                start, constraints=initial, permitted=pending["permitted"], calibrate=pending["calibrate"])
+                start, constraints=initial, permitted=pending["permitted"], calibrate=self._calibrate_for(pending["scope"]))
             hindsight = {axis: {"voi": voi, "cost": initial["hidden"][axis],
                                 "competence": self.learner.competence(start, axis)}
                          for axis, voi in analysis["voi"].items()}
