@@ -661,15 +661,16 @@ class InvestigativeRun(CausalRun):
         """Hindsight with UPDATED knowledge, from the visible context the decision started in."""
         hindsight = {}
         start, scope = pending["start"], pending["scope"]
+        original_constraints = pending["initial_constraints"]
         if self.policy.explore == "learned":
-            initial = dict(pending["initial_constraints"])
+            initial = dict(original_constraints)
             analysis = self.interpreter.decision_analysis(
                 start, constraints=initial, permitted=pending["permitted"], calibrate=self._calibrate_for(pending["scope"]))
             hindsight = {axis: {"voi": voi, "cost": initial["hidden"][axis],
                                 "competence": self.learner.competence(start, axis)}
                          for axis, voi in analysis["voi"].items()}
         unexplained = (self.learner.unexplained_variability(
-            start, ("standard", "express"), project_out=frozenset(pending["constraints"]["hidden"]))
+            start, ("standard", "express"), project_out=frozenset(original_constraints["hidden"]))
             if self.policy.diagnosis else 0.0)
         chosen = pending["chosen"]
         record = {"evidence_id": outcome.event_id, "scope": scope,
@@ -682,7 +683,7 @@ class InvestigativeRun(CausalRun):
                   "effort": {"belief_queries": sum(a["belief_queries"] for a in pending["analyses"]),
                              "inspections": len(pending["inspections"])}}
         association = ({axis: self.learner.variable_association(start, axis, ("standard", "express"))
-                        for axis in sorted(pending["constraints"]["hidden"])}
+                        for axis in sorted(original_constraints["hidden"])}
                        if self.policy.explore == "learned" else {})
         return self.refiner.appraise_process(pending["state"], record=record, hindsight=hindsight,
                                              unexplained=unexplained, now=now, information_gain=gains,
@@ -699,7 +700,7 @@ class InvestigativeRun(CausalRun):
         first = pending["analyses"][0]
         immediate = pending["greedy"][0].split(":")[1]
         signals = {"max_net_information_value": max(
-                       [v - pending["constraints"]["hidden"][a] for a, v in first["voi"].items()] or [0.0]),
+                       [v - pending["initial_constraints"]["hidden"][a] for a, v in first["voi"].items()] or [0.0]),
                    "immediate_confidence": first["predictions"].get(pending["greedy"][0], {}).get("probability", 1.0),
                    "immediate_uncertainty": first["predictions"].get(pending["greedy"][0], {}).get("uncertainty", 0.0),
                    "immediate_familiarity": first["predictions"].get(pending["greedy"][0], {}).get("familiarity", 0)}
