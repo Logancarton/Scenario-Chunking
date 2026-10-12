@@ -122,6 +122,23 @@ def test_adequacy_self_diagnosis_separates_causes(kind, status):
     assert learner.explanations[(SCOPE, "express")].adequacy()["status"] == status
 
 
+def test_world_reveals_only_inspected_values_charges_costs_and_counts_violations():
+    world = InvestigationWorld.scripted(
+        seed=1, family="t", index=0, visible={"urgency": "low"}, hidden={"capacity": "open"},
+        domains={"capacity": ("open", "limited")}, truths={"standard": True, "express": True},
+        inspect_costs={"capacity": .06}, stakes=cm.stakes("high"), prohibited={"express"})
+    assert "pair:capacity:?" in world.public_cues()
+    assert world.public_constraints()["prohibited"] == {"express"}
+    signal = world.inspect("capacity")
+    assert signal.reward == -.06 and "pair:capacity:open" in world.public_cues()
+    with pytest.raises(ValueError):
+        world.inspect("capacity")  # each variable is examined at most once
+    world.execute(Action("route", target="express"))
+    assert world.violations == 1  # the world records it; cognition must never cause it
+    with pytest.raises(RuntimeError):
+        world.execute(Action("route", target="standard"))
+
+
 # -- valuation and value of information (interpreter) --------------------------------
 
 def constraints(prohibited=frozenset(), hazard="low", cost=.06):

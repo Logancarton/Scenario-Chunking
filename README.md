@@ -496,3 +496,34 @@ PY
 ```
 
 GitHub Actions runs this experiment with the full E6–E10 historical research gate. Review the [research journal](docs/COGNITIVE_RESEARCH_JOURNAL.md) and [CI runs](https://github.com/Logancarton/Scenario-Chunking/actions) for current verification; code tests and passing CI do not establish a cognitive advantage.
+
+
+## Experiment 12 — investigation, hard constraints and metacognitive process learning (research-only)
+
+Branch `experiment/e12-metacognitive-learning`. It continues Experiment 12 (persistent revisable explanations; see the [research journal](docs/COGNITIVE_RESEARCH_JOURNAL.md) for the full record). Research runner only; Sonara production is untouched.
+
+**What was added, in existing owners.**
+* `InvestigationWorld` hides consequential variables until inspected at a public cost. It also has public stakes (severe failures), a safe deferral and public authorization restrictions.
+* `CognitiveState` carries the authorization, which can only tighten.
+* `ActionSelector`, the sole authority, removes impermissible actions before any value, bonus or refinement is compared.
+* `MeaningInterpreter` values actions with severity and computes a decision-aware value of information over permitted actions only.
+* `ExplanationBank` marginalizes uninspected variables and can diagnose its own adequacy: insufficient evidence, unexplained variability, representation/search limit, competing explanations, limited coverage.
+* `OutcomeLearner` holds a slow-timescale process model, `CognitiveControl`, that learns which hidden variables are worth exploring from model-free association evidence and a leave-one-out cross-family prior.
+* `ProgressiveRefiner` appraises *how* each decision was reached and prices a scarce option's future use.
+
+**Measured on never-used seeds (pre-registered, run once):**
+* **Safety:** 0 prohibited actions in 892,160 decisions; the unmodified E12 path executed 2,048 of 59,200.
+* **Investigation vs not investigating:** learned investigation improves frozen held-out decisions over never investigating (+0.041 expected reward, 29/11 seeds). It also beats a budget-matched random allocation while learning (+0.018).
+* **Fixed exploration vs learned allocation:** fixed count-based exploration buys more knowledge and better held-out decisions (+0.033 over the learned process), but costs 4.3× the inspections and −0.110 reward per learning experience. Over 960 continuing experiences the held-out gap shrinks to about −0.01 (not significant), and the learned process stays ahead while learning in every phase.
+* **Transfer:** carrying process knowledge to a new family changes what is inspected (fewer irrelevant inspections when related; mild negative transfer when unrelated) but **no reward transfer was demonstrated**.
+* **Trust:** learned trust in one's own predictions hurt decisions slightly at decision time.
+* **Multi-step:** pricing a scarce option's future use improved reward (+0.034).
+* **Evidence versus representation:** more evidence fixes representable relationships. It does not fix three-variable parity (even with 3× search), hidden or confounded causes, or narrow experience.
+
+```bash
+python -m pytest -q tests/test_causal_metacognition.py
+python -m scenario_chunking.causal_metacognition benchmark dev     # also: transfer | longitudinal | options; dev | final
+python -m scenario_chunking.causal_representation                  # add "final" for the 20 final seeds
+```
+
+Committed summary: `docs/e12_metacognition_summary.json`. Passing tests and CI do not establish general cognition; these are bounded synthetic results.

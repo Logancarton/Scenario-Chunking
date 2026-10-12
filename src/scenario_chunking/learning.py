@@ -314,7 +314,11 @@ class ExplanationBank:
         cannot tell which. ``representation_or_search_limit`` means contexts are
         internally consistent yet the best rule in the beam misfits them: the
         language or the bounded search cannot express the relationship.
-        ``project_out`` drops variables (e.g. hidden ones) before the test.
+        ``competing_explanations`` means beam members still predict the observed
+        contexts differently. ``limited_coverage`` means the explanation fits
+        what was experienced but most combinations of the observed variable
+        values were never seen, so predictions there are unsupported (not shown
+        to be wrong). ``project_out`` drops variables (e.g. hidden ones) first.
         """
         data = self._data()
         projected: dict[frozenset[str], list[int]] = {}
@@ -522,7 +526,6 @@ class ExplanationBank:
         del self.regime_changes[:-32]
         report.update(changed=True, **event)
         return report
-
 
 
 class OutcomeLearner:

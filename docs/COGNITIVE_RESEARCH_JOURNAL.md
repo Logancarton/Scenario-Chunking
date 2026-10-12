@@ -992,6 +992,286 @@ Measurement:
 * Committed summary: `docs/e12_diagnostic_summary.json`.
 * Tests: `tests/test_causal_diagnostic.py`.
 
+### Continuous cognitive development, decision reasoning and metacognitive learning (2026-10-11)
+
+Branch `experiment/e12-metacognitive-learning`, from `main` at `55edeca`. This continues Experiment 12; every comparison below is an internal E12 treatment, not a new experiment. Draft PR #8 was not touched.
+
+**Question.** Does Sonara's failure come from missing evidence or from what the architecture can express? Can she tell when she does not know enough, examine what matters, weigh consequences and constraints, and learn not only about the world but about how to allocate her own investigation? Does such process learning improve held-out decisions beyond knowledge accumulation, and does it transfer?
+
+**Baseline reproduced before any change** (Python 3.11.17, macOS). Full suite 167 passed. Historical gate (`write_all`) reproduced the journal to four decimals (replication: explanation_full +0.1725, episodic +0.0570). The seed-1301 unified reference reproduced to nine decimals in both protocols. These checks were repeated after every owner change; they still pass at the end (193 tests), and the golden byte-for-byte digests of the original treatments are unchanged.
+
+#### Stage 1 — audit of the live E12 signal path (from the code)
+
+`CausalRun.act/deliver` → `CognitiveState` → `ProgressiveRefiner.thread` → `MemoryRouter.retrieve` → `MeaningInterpreter.incremental_action_values` → `OutcomeLearner.explanation_prediction` (`ExplanationBank`) → `ActionSelector.select` (UCB exploration, then `refine_incremental`) → world → outcome event → `diagnose_causal` → `explanation_feedback` → `record_causal_revision`.
+
+| Question | What the code does |
+| --- | --- |
+| 1. Where variables are identified | `world.public_cues()`: every public `pair:axis:value` literal; domain and epoch become scope. There is no notion of a variable that exists but has not been observed. |
+| 2. Variable–outcome association | One DNF beam per (scope, action), scored by an ε = 0.1 noise likelihood plus a complexity price; durable sufficient statistics in unified E12. |
+| 3. Competing explanations | Beam posterior; 4q(1 − q) disagreement about the current context. |
+| 4. Missing variables | **Not recognized.** Regime detection is the only misfit test, and it targets change over time. |
+| 5. Knowing evidence is insufficient | Uncertainty is computed, then multiplied by `risk_price = 0`: **inactive**. |
+| 6. All viable actions evaluated | Yes, but only two routes, both always permitted. |
+| 7. Consequences | V = 2p − 1 − cost: one step, symmetric loss, no severity, no deferral. |
+| 8. Uncertainty → investigation | **No.** Exploration is count-based UCB per scope, during training only. |
+| 9. Constraints, risk, goals | Costs only. **No hard-constraint concept**: nothing could stop a prohibited action. |
+| 10. Outcomes change the reasoning process | **No.** Only explanations change. Older process quantities (`inspect_value`, `focus_value`, `refinement_bias`) are not used by E12. |
+| 11. Persistence | Learner and refiner pickle; independent-process restart verified previously. |
+| 12. Strategy adaptation | Only manual `Treatment` switches. |
+
+Present but behaviorally inactive under E12, by earlier measurement or by code: thread identity and anchors (0.000 effect), directed review, meaning literals outside sequence tasks, decay-gated anchors, sparse recruitment, predictive uncertainty (× 0), the refiner's `meaningfully_changed_action` flag.
+
+#### Stage 2 — diagnostics on the unmodified architecture
+
+**(a) More evidence, or a representation limit?** (`causal_representation.py`). The unmodified explanation learners (original `explanation_full`, the selected `unified`, and `deep_search`: unified with 3 search rounds and a 96-rule beam, about 3.3× the scoring work) learn eight controlled worlds. The streams are matched-evidence. Evidence quantity is 16–512 observations, and diversity is varied independently (`broad`: 24 training combinations; `narrow`: 8). Accuracy is read by a read-only probe on 8 withheld combinations. The dev run (5 seeds) was made before any owner change; the final results (20 fresh seeds) are below.
+
+**(b) Current-architecture limits in a world with hidden variables, constraints and severity.** `InvestigationWorld` (environment owner) keeps some consequential variables hidden until inspected at a public cost. It has public stakes (an express failure under high hazard costs 3), a safe deferral (−0.3), and public authorization restrictions. In the `restricted` family, express would *always* succeed exactly where it is prohibited. The unmodified unified E12 path (`e12_current`) runs on the same cases with the hidden variables simply unobservable. On a single dev smoke run (seed 31) it executed prohibited actions in 6 of 200 training and 14 of 220 held-out decisions. It has no inspection action, and it values a severe failure like an ordinary one. A knowledge-driven value of information without exploration (`voi_fixed`) behaved *identically* to never inspecting. A model that has never seen a hidden variable assigns it zero information value, so it never looks: the cold-start "unknown unknowns" problem.
+
+#### Stage 3 — mechanisms and their owners
+
+| Mechanism | Owner | Why there |
+| --- | --- | --- |
+| Hidden variables, inspection, stakes, deferral, restrictions, private truth | `InvestigationWorld` (environment) | The world alone holds private truth; inspection is an observation it returns. |
+| Authorization (hard constraints), investigation context, revealed values | `CognitiveState` | Constraints are part of the situation, set only from a public signal, monotone (add, never lift). No learning owner holds a reference (tested by source inspection). |
+| Hard-constraint enforcement | `ActionSelector` (sole authority) | Impermissible actions are removed **before** any value, exploration bonus or refinement is compared, with a post-selection guard. When nothing is permitted it refuses. |
+| Severity-aware values, deferral value, decision-aware value of information | `MeaningInterpreter` | It already translates the learner's beliefs into action values. VOI = E_x[max_a V(a\|x)] − max_a E_x[V(a\|x)] over **permitted** final actions only, from current beliefs only. |
+| Partial observability (uninspected variables marginalized, `?` never edit material), adequacy self-diagnosis, coverage, model-free association evidence, variable frequencies | `ExplanationBank` / `OutcomeLearner` | Knowledge and its sufficient statistics live here. The new statistics are computed from the existing durable store (no second truth store). |
+| Process knowledge `CognitiveControl` (relevance of examining each variable per scope, cross-scope prior, missing-information drive, optional trust) | held and updated **only** by `OutcomeLearner.process_feedback` (module `cognitive_control.py`) | One learning authority, two timescales. Process state has no reference to memory, explanations, selector or authorization. |
+| Process appraisal (what was examined, prequential information gain, association evidence, hindsight-warranted examinations, missed/wasted, error attribution, effort) | `ProgressiveRefiner.appraise_process`, recorded in the continuing `ThoughtThread` | The thought owner already diagnoses each outcome (`diagnose_causal`); the learner alone turns the diagnosis into learning. |
+| Option pricing for a scarce action | `ProgressiveRefiner.option_costs` → `refine_incremental` | Existing cost-sensitive reconsideration; no second planner or selector. |
+| Orchestration, worlds, conditions, measurement | `InvestigativeRun` (extends `CausalRun`), `causal_metacognition.py`, `causal_representation.py` | The runtime sequences the inspect-or-act loop; the selector decides each step. |
+
+Every switch defaults off; the original E12 path is unchanged (golden digests, the seed-1301 reference and the historical gate all reproduce exactly).
+
+**How an experience changes later cognition (one path).** The decision starts with hidden variables marked `?`. The interpreter values every route under public stakes and computes each variable's value of information from current beliefs. During learning, the selector adds the process model's exploration value for each variable: gain × P(examining it matters here) × (1 − competence). The selector then inspects or acts, and the world reveals what was inspected. The outcome updates the explanation, which marginalizes what stayed hidden. The refiner appraises the decision, and the learner turns the appraisal into process learning: the model-free log Bayes factor that success depends on each examined variable (computed from the explanation bank's statistics), and the scope's unexplained-variability drive. The next decision in this scope, or in a new scope via the leave-one-out prior, examines variables differently. Held-out decisions are frozen: no knowledge, process, variable-frequency or exploration update (tested by state digest).
+
+#### Development history (dev seeds 31–67 only; the failed versions are kept as findings)
+
+1. **v1, hindsight relevance:** "was examining X warranted?", judged by the *updated* model's value of information. This failed because hindsight is unreliable while knowledge is immature. In seed 67, delivery's true cause (capacity) was judged warranted 0 times in about 40 appraisals, while irrelevant color and weather were judged warranted. The learner under-explored (0.19 inspections/decision vs UCB's 2.42).
+2. **v1, learned trust in valuation:** a recency-weighted track record per (scope, procedure, familiarity, confidence). It **hurt** held-out reward (−0.047, 7/8 seeds negative), and resetting process state at held-out *improved* decisions. Its sign later flipped across iterations (v2 −0.004, v3 +0.059, neither significant). It was excluded from the selected mechanism and kept as the pre-registered control `meta_plus_trust`.
+3. **Pooling flaw found by a test:** pooling relevance evidence by observation count let delivery's "weather is irrelevant here" evidence lock out exploring weather in repair, where weather is the cause. The fix: a leave-one-out hierarchical prior in which each scope counts once and a scope never counts its own evidence twice.
+4. **v2, prequential predictive gain** (did knowing X improve the prediction of what then happened?). Outcome-grounded, but circular: it turns positive only after the explanation has absorbed X, which needs exactly the data exploration provides. Exploration stopped early, and transferring the process state was harmful (related family: −0.078 [−0.185, −0.004] training reward).
+5. **v3, selected:** model-free association evidence (log Bayes factor that success depends on X among examined experiences, computed from the bank's own statistics) plus the self-diagnosed missing-information drive. Bounded: one outcome changes the belief by less than 0.15.
+6. **Dev sweep of the two hand-set dispositions** (exploration gain 0.5/1.0 × competence scale 8/24). The selection rule was fixed in advance: maximize held-out reward subject to training reward ≥ never inspecting. Only the default (0.5, 8) satisfied the constraint.
+7. **Multi-step world redesigned before measurement:** the first version was analytically non-discriminative (reserving the scarce option was worth +0.013 per decision). The option study now trains one learner on matched evidence and compares valuations on identical frozen copies.
+8. **Self-diagnosis gained a coverage signal**, because narrow-diversity failures looked "adequate". Its thresholds were otherwise set a priori.
+9. **Deferral trap found:** a pessimistic belief plus a safe option means the pessimistic action is never tried, so the belief is never corrected. Route exploration (κ = 0.5) cannot overcome the value gap. This was **not** addressed; it is quantified below.
+
+**Protocol.** Mechanisms, conditions, endpoints, dev expectations and seed sets were committed in `a369a82` (`PROTOCOL` in `causal_metacognition.py`) **before** any final-seed run. Final seeds 7001 + 53k (k < 40; longitudinal k < 20) and representation seeds 5003 + 41k (k < 20) were never used in development, and each final study was run once. Intervals are seed-paired percentile bootstraps (2000–4000 resamples) with no multiplicity correction; secondary results are descriptive.
+
+**Conditions (one live path; only the investigation/process policy differs; knowledge learner = unified + partial observability; route exploration κ = 0.5 for all):** `e12_current` (unmodified E12 path, reference), `no_investigation`, `always_investigate`, `voi_fixed` (knowledge-driven VOI, no exploration), `voi_ucb` (VOI plus count-based UCB inspection exploration, κ = 0.5: the strong fixed-policy baseline), `random_matched` (the metacognitive learner's inspection rate per family, random variables, no VOI: budget-matched), `metacognitive` (selected), `meta_no_diagnosis`, `meta_plus_trust`. Held-out decisions are also evaluated with the trained knowledge but a **fresh** process model (`@process_reset`) for the two conditions whose process state could act. Five interleaved families of 120 experiences each: `delivery` (capacity matters), `repair` (weather matters), `coordination` (no hidden cause), `remote` (capacity matters but inspection costs 0.5), and `restricted` (adversarial prohibitions; capacity matters). Checkpoints are at 100/200/400/600 experiences. Held-out cases are 4 withheld visible combinations × hidden values × hazard (novel), plus a familiar probe. Decisions are scored by noiseless expected reward net of inspection costs, with realized reward reported alongside.
+
+#### Final results — more evidence, or a representation limit? (20 fresh seeds, unmodified explanation learners)
+
+Held-out express-prediction accuracy on 8 withheld combinations after 16 / 32 / 64 / 128 / 256 / 512 matched observations (unified learner). The late gain is the change from 128 to 512 observations. The self-diagnosis column is the learner's own read-only adequacy status at 512 observations, over 20 runs.
+
+| World | Diversity | Accuracy curve | Late gain (128→512) | deep_search at 512 (≈3.3× work) | Self-diagnosis at 512 |
+| --- | --- | --- | --- | ---: | --- |
+| simple (1 literal) | broad | 0.88 0.93 0.95 0.98 1.00 0.99 | +0.009 (n.s.) | 0.99 | adequate 20 |
+| simple | narrow | 0.74 0.85 0.92 0.97 0.97 0.97 | 0 | 0.93 | limited coverage 20 |
+| interaction (XOR of two) | broad | 0.50 0.66 0.89 0.97 0.99 1.00 | +0.025 | 1.00 | adequate 20 |
+| interaction | narrow | 0.49 0.60 0.67 0.64 0.64 0.64 | +0.003 | 0.66 | limited coverage 20 |
+| compound (3 terms × 2 literals) | broad | 0.61 0.69 0.78 0.89 0.99 1.00 | **+0.113 [+0.037, +0.200]** | 1.00 | adequate 20 |
+| compound | narrow | 0.54 0.56 0.65 0.65 0.66 0.66 | +0.009 | 0.66 | limited coverage 19 |
+| change (rule flips at 256) | broad | 0.82 0.94 0.96 1.00 1.00 1.00 | +0.003 | 1.00 | adequate 20 |
+| parity (3 variables) | broad | 0.52 0.42 0.46 0.51 0.51 0.57 | +0.056 [−0.016, +0.134] | 0.57 | **representation/search limit 17** |
+| hidden cause (never observed) | broad | 0.43 0.36 0.39 0.31 0.38 0.32 | +0.009 | 0.33 | unexplained variability 10; competing 5; other 5 |
+| noisy (ε = 0.25) | broad | 0.57 0.78 0.83 0.84 0.83 0.86 | +0.016 | 0.85 | unexplained variability 11; misattributed to representation 4 |
+| proxy (hidden cause, 85%-correlated visible marker) | broad | 0.43 0.43 0.44 0.45 0.41 0.42 | −0.025 [−0.066, +0.009] | 0.42 | unexplained variability 9; **adequate 5** |
+
+The original `explanation_full` learner follows the same pattern, slightly lower on compound (0.94).
+
+**What this separates.**
+* **Insufficient evidence:** a representable relationship that needs more data (compound, interaction) keeps improving with evidence and reaches about 1.00. The learner says "adequate" only once it fits.
+* **Insufficient diversity:** the same rules with 512 observations from 8 combinations plateau at 0.64–0.66 and **do not improve with more evidence**. The new coverage signal flags this in ≥ 19/20 runs. It also flags the narrow `simple` case, whose generalization happened to be right, because there the evidence does not support it.
+* **Representation limit:** parity stays near chance even with 3.3× search and 512 observations, and is self-diagnosed as a representation/search limit in 17/20 runs.
+* **Missing variable or noise:** these are self-diagnosed as unexplained variability in about half to three-quarters of runs. The two are indistinguishable from these data, and the learner does not claim to know which.
+* **Misleading correlation:** with the cause hidden, the learner commits to the correlated marker. Accuracy gets slightly *worse* with evidence, and 5/20 runs call the explanation adequate. **Observation alone cannot reveal a confounded proxy;** only intervention or examining the hidden variable can.
+* **More reasoning is not more understanding.** `deep_search` never rescues parity, hidden causes, proxies or narrow experience.
+
+#### Final results — investigation benchmark (40 fresh seeds, run once; 8,800 frozen held-out decisions per condition at 600 experiences)
+
+| Condition | Held-out expected reward | Regret | Novel / familiar | Inspections (relevant / irrelevant) | Severe choices | Prohibited executed | Deferred | Knowledge agreement | Training reward | Training inspections (irrelevant) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| e12_current (unmodified path) | +0.265 | 0.277 | +0.208 / +0.417 | 0 | 4.1% | **3.1%** (274) | 0% | — | +0.312 | 0 |
+| no_investigation | +0.295 | 0.247 | +0.252 / +0.411 | 0 | 0.8% | 0 | 28% | 0.731 | +0.310 | 0 |
+| voi_fixed (knowledge VOI, no exploration) | +0.295 | 0.247 | identical to no_investigation | 0 | 0.8% | 0 | 28% | 0.731 | +0.310 | 0 |
+| always_investigate | −0.040 | 0.582 | −0.074 / +0.049 | 3.00 (0.80 / 2.20) | 0.6% | 0 | 22% | 0.851 | −0.067 | 3.00 (2.20) |
+| voi_ucb (fixed count-based exploration) | **+0.369** | 0.173 | +0.332 / +0.470 | 0.24 (0.18 / 0.06) | 0.7% | 0 | 23% | **0.833** | +0.210 | 2.43 (1.82) |
+| random_matched (same budget, random) | +0.316 | 0.226 | +0.276 / +0.423 | 0.17 (0.06 / 0.11) | 0.6% | 0 | 25% | 0.782 | +0.303 | 0.56 (0.40) |
+| **metacognitive** (selected) | +0.337 | 0.205 | +0.296 / +0.445 | 0.17 (**0.14 / 0.03**) | 0.8% | 0 | 25% | 0.788 | **+0.320** | 0.56 (0.32) |
+| meta_no_diagnosis | +0.336 | 0.206 | +0.295 / +0.446 | 0.16 (0.14 / 0.02) | 0.9% | 0 | 25% | 0.787 | +0.326 | 0.47 (0.25) |
+| meta_plus_trust | +0.348 | 0.194 | +0.307 / +0.458 | 0.15 (0.13 / 0.02) | 0.6% | 0 | 23% | 0.808 | +0.325 | 0.56 (0.31) |
+| metacognitive @ process reset | +0.337 | identical to metacognitive (structural null) | | | | | | | | |
+| meta_plus_trust @ process reset | +0.359 | 0.183 | | | | | | 0.808 | | |
+
+Pre-registered contrasts (metacognitive minus X; held-out at 600; training = mean over the 600 learning experiences, inspection costs included):
+
+* **P1 vs fixed exploration (voi_ucb).** Training **+0.110 [+0.100, +0.120]** (39/1); held-out **−0.033 [−0.056, −0.012]** (12/28). Both signs match the dev expectation. The learned process spends 4.3× fewer inspections and a lower irrelevant share while learning (57% vs 75%), but indiscriminate exploration buys more knowledge (agreement 0.833 vs 0.788) and therefore better frozen decisions.
+* **P2 vs budget-matched random allocation.** Training **+0.018 [+0.004, +0.032]** (25/15); held-out +0.021 [−0.001, +0.042] (26/14), borderline. At the same inspection rate, held-out inspections are aimed at causes: 0.14 relevant / 0.03 irrelevant vs 0.06 / 0.11.
+* **P4 safety.** No new condition executed a prohibited action in any training or held-out decision (0 of 8,800 held-out per condition). The unmodified path executed 274 (3.1%) in the same held-out cases.
+
+Secondary (descriptive):
+
+* **Learned exploration vs none, everything else identical:** metacognitive − voi_fixed held-out **+0.041 [+0.020, +0.063]** (29/11). The only difference is the process-learned exploration of hidden variables. vs the unmodified E12 path: +0.072 [+0.041, +0.104] (30/10). Severity-aware valuation, deferral and constraints alone (no_investigation − e12_current): +0.031 [−0.003, +0.067], with severe-consequence choices falling from 4.1% to 0.8%.
+* **Process state at held-out.** With the selected mechanism, process state governs only exploration while learning, so resetting it leaves every frozen decision unchanged (exactly 0). With learned trust, the reset *improves* decisions: trust − trust@reset **−0.011 [−0.022, −0.000]** (15/24). The trust variant nevertheless has better knowledge (0.808 vs 0.788) and held-out reward (+0.012 vs metacognitive, n.s.). Its benefit, if any, comes from changing what it experiences while learning, not from trusting itself differently at decision time. This replicates dev v1.
+* **Self-diagnosed missing-information drive: unsupported.** Held-out +0.001 [−0.007, +0.010]; training −0.006 [−0.010, −0.002] (8/24). It adds exploration that does not pay.
+* **Learning curves** (held-out reward at 100 / 200 / 400 / 600): metacognitive +0.196 / +0.265 / +0.313 / +0.337; voi_ucb +0.188 / +0.264 / +0.343 / +0.369; no_investigation +0.172 / +0.235 / +0.282 / +0.295. The learned process is level with or ahead of UCB through 200 experiences; UCB pulls ahead as its extra data accumulates.
+* **By family** (held-out reward, metacognitive / voi_ucb / no_investigation): repair (weather decides standard) +0.305 / +0.339 / +0.110; delivery (capacity decides express) +0.501 / +0.520 / +0.506; coordination (no hidden cause) +0.269 / +0.282 / +0.251; remote (inspection costs 0.5; nobody inspects at held-out) +0.179 / +0.227 / +0.179; restricted +0.430 / +0.479 / +0.431. Investigation pays mostly where a hidden variable decides the *cheap default* (repair). UCB's remote advantage comes from knowledge bought with expensive early inspections.
+* **Post hoc, not pre-registered:** counting 600 learning experiences plus 600 decisions at held-out quality, metacognitive earns +46.5 [+29.6, +62.1] (35/5) more expected reward than voi_ucb. UCB's held-out edge would need about 2,000 further decisions to repay its learning cost.
+* **Knowing when knowledge is insufficient** (AUC of an accessible signal for "acting immediately would be wrong", held-out): net value of information 0.62 (voi_ucb 0.67, always_investigate 0.69); low confidence 0.54; unfamiliarity 0.58. These signals are weak but above chance; better knowledge sharpens the value-of-information signal.
+* **Error attribution while learning** (metacognitive): 95% of confident errors are knowledge-or-noise and 5% missing information (an unexamined variable that hindsight judged worth examining).
+* **Costs.** These are listed in the cost table below.
+
+#### Final results — transfer of process knowledge to a new family (40 fresh seeds)
+
+One organism learns `delivery` (capacity matters) and `coordination` (no hidden cause), 120 experiences each, then meets a new family. Either `relay` is **related** (capacity matters, new visible rule) or `clinic` is **unrelated** (weather matters, capacity does not). The new family is a new scope, so explanations, variable frequencies and exploration counts start empty in every condition. `meta_transfer` keeps its process knowledge; `meta_fresh` has `CognitiveControl` reset at the switch. That is the only difference.
+
+| New family | Contrast (first 40 experiences unless noted) | Result |
+| --- | --- | --- |
+| related | **P3: training reward, transfer − fresh** | **+0.001 [−0.025, +0.026]** (26/14) |
+| related | irrelevant inspections per decision | −0.128 [−0.198, −0.064] (7/31) |
+| related | relevant inspections per decision | −0.029 [−0.109, +0.047] |
+| related | held-out reward after 20 / 40 experiences | −0.021 [−0.082, +0.029] / +0.015 [−0.017, +0.047] |
+| unrelated | **P3: training reward, transfer − fresh** | **+0.006 [−0.006, +0.018]** (28/12) |
+| unrelated | relevant (weather) inspections per decision | **−0.041 [−0.081, −0.008]** (6/20): negative transfer |
+| unrelated | held-out reward after 20 / 40 | +0.006 / −0.001 (n.s.) |
+| related | transfer − voi_ucb: training / held-out @40 | +0.101 [+0.073, +0.129] / −0.000 [−0.043, +0.045] |
+| unrelated | transfer − voi_ucb: training / held-out @40 | +0.134 [+0.113, +0.155] / −0.014 [−0.048, +0.020] |
+| related | transfer − no_investigation: held-out @20 / @40 | +0.081 [+0.024, +0.138] / +0.082 [+0.019, +0.150] |
+
+Process knowledge **does** carry over and changes how a new family is investigated: fewer irrelevant examinations where the old lesson applies, and fewer examinations of the true cause where it does not. Neither change produced a measurable reward difference within 40 experiences. **Transfer of learned reasoning strategy is not demonstrated.** The mild negative transfer is real at the behavior level. In a new family, learned investigation was as good as fixed UCB at held-out after 40 experiences while earning +0.10 to +0.13 more per experience.
+
+#### Final results — longitudinal continuing experience (20 fresh seeds, 960 experiences)
+
+Four phases, each with interleaved families and 80 experiences per family:
+1. delivery, coordination, repair.
+2. delivery, repair, remote; delivery inspection cost raised to 0.25.
+3. A 50,000-unit time gap, then the delivery rule shifts so that **weather replaces capacity** as express's hidden cause; coordination and restricted.
+4. delivery, relay, clinic.
+
+Held-out sets are evaluated every 120 experiences under the rules in force; a serialize/restore restart is taken at experience 480.
+
+| Held-out reward at | 120 | 240 | 360 | 480 | 600 | 720 | 840 | 960 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| metacognitive | +0.277 | +0.369 | +0.315 | +0.332 | +0.340 | +0.347 | +0.302 | +0.315 |
+| voi_ucb | +0.336 | +0.377 | +0.352 | +0.349 | +0.355 | +0.361 | +0.307 | +0.329 |
+| no_investigation | +0.205 | +0.262 | +0.242 | +0.259 | +0.285 | +0.292 | +0.254 | +0.269 |
+| always_investigate | +0.166 | +0.222 | −0.140 | −0.122 | −0.067 | −0.055 | −0.036 | −0.010 |
+
+(The average changes as families enter, so read it within rows.)
+
+* metacognitive − voi_ucb, held-out: −0.059 [−0.096, −0.023] at 120, then −0.008, −0.037, −0.016, −0.015, −0.014, −0.005 and −0.014 (from 480 on, every interval includes 0). Training reward is higher in **every** phase: +0.130, +0.056, +0.165, +0.118 (all intervals above 0).
+* metacognitive − no_investigation, held-out: +0.046 to +0.107, with intervals above 0 at every checkpoint after 120.
+* **Retention:** a family absent for a whole phase keeps its held-out quality. Repair stays at +0.33 through phases 3–4; coordination stays at +0.23 through phase 2. Scoped knowledge is not disturbed by unrelated experience, as the scope-isolation test also shows.
+* **Changed circumstances:** after the delivery shift, the metacognitive learner's delivery reward falls from +0.60 to +0.55 and does not recover by 960 (voi_ucb: +0.61 → +0.54 → +0.57). A non-investigating learner cannot even see this shift: both hidden causes have identical marginal statistics. Regime detection fired 0.1 times per metacognitive run (voi_ucb 0.5): sparse examination yields too few revealed contradictions for the prequential trigger (≥ 5 of 12). **Detecting that a learned investigation strategy has stopped working is not demonstrated.**
+* **Restart:** at experience 480 the whole organism was serialized and restored. A restored copy and an in-memory twin produced identical decisions over the next 20 experiences in **20/20** runs, and learning continued from the restored copy. The focused test also verifies an independent-process restart.
+* **Memory:** pickled learner + refiner is 4.1 MB (metacognitive), 4.2 MB (voi_ucb) and 2.9 MB (no_investigation) after 960 experiences. Most of it is retained explanation state and thought history, not process state.
+
+#### Final results — multi-step consequences: a scarce option (40 fresh seeds)
+
+In the `fleet` family, using express makes it unavailable (a hard feasibility constraint) for the next 3 decisions. Urgent requests are rare (20%) but worth 4 on success; delayed requests are frequent and modestly better served by express. One learner per seed is trained on matched, learner-independent evidence (240 experiences). Greedy and option-aware valuation then decide on identical frozen copies over 240 held-out decisions. The refiner prices the scarce option from the advantages the continuing thought has actually seen; the selector still decides.
+
+| | Expected reward | Urgent requests served by express | Express spent on modest requests | Deferred | Prohibited executed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| greedy | +0.417 | 31% | 18% | 46% | 0 |
+| option_aware | **+0.451** | **53%** | **0%** | 56% | 0 |
+
+Option-aware − greedy: **+0.034 [+0.018, +0.050]** (30/9), about half the analytic headroom (+0.065 with perfect knowledge). The organism recognizes that a locally attractive use undermines a larger later objective, through the existing refinement owner and with no second planner. The pricing is a one-cycle approximation over an empirical advantage distribution, not a general planner.
+
+#### Safety and constraint results
+
+* **0 prohibited actions in 892,160 decisions**: every new condition, every training and held-out decision, in all four studies (benchmark 544,000; transfer 108,800; longitudinal 210,560; options 28,800). This includes the adversarial family, where the prohibited action would always succeed and was never explored.
+* **Tests** check that a fabricated +1000 reward estimate, or a 50-point exploration bonus, cannot select a prohibited action. When everything else is believed to fail, the organism defers; when nothing is permitted, the selector refuses. Authorization only tightens, and no learning or valuation module references it.
+* The **unmodified E12 path** executed 2,048 prohibited actions in 59,200 benchmark decisions, including 274 of its 8,800 held-out decisions (3.1%). Its severe-consequence choices (expected loss ≥ 2) were 4.1%, against 0.6–0.9% with severity-aware valuation.
+
+#### Costs (benchmark, means per experience or decision)
+
+| | CPU per learning experience | CPU per decision | Rules scored per experience | Learned state after 600 |
+| --- | ---: | ---: | ---: | ---: |
+| no_investigation | 8.4 ms | 4.0 ms | 250 | 2.26 MB |
+| voi_ucb | 14.1 ms | 8.1 ms | 354 | 3.04 MB |
+| metacognitive | 19.7 ms | 7.7 ms | 280 | 2.99 MB |
+| meta_plus_trust | 20.9 ms | 7.9 ms | 289 | 3.02 MB |
+| random_matched | 20.0 ms | 9.5 ms | 296 | 2.76 MB |
+
+The process appraisal costs about +5.6 ms per learning experience over voi_ucb (hindsight value of information, association evidence, prequential gain). Revealed variables enlarge the explanation store. Value-of-information analysis roughly doubles decision CPU.
+
+#### Answers
+
+**A. What did we discover about the existing architecture?**
+* *Worked:* revision of persistent explanations, durable evidence with regime detection, scoped knowledge, frozen evaluation and restart.
+* *Present but inactive:* predictive uncertainty (× 0), thread identity and anchors, directed review, decay, sparse recruitment.
+* *Missing:* any notion of an unobserved variable or of inspecting one; recognizing a missing variable or a representation limit; hard constraints; severity; deferral; uncertainty reaching investigation; outcomes changing the reasoning process. These were demonstrated before any change: the unmodified path executed prohibited actions, and a knowledge-driven value of information without exploration never looked at a variable it had never seen.
+
+**B. Why was Sonara making mistakes?** In descending order of measured weight:
+1. **Inappropriate pessimism with a safe option (the deferral trap).** Deferral accounts for about 49% of held-out regret: 25% of decisions defer, and half of those had a better permitted route. The pessimistic action is never tried, so the belief is never corrected. This affects every condition, including UCB (44%).
+2. **Insufficient information.** Hidden causes made never-investigating learners lose 0.041–0.074 of held-out reward.
+3. **Insufficient diversity**, which more evidence cannot fix.
+4. **Representation limits** (parity).
+5. **Misleading correlation**, undetectable from observation.
+6. **Poor decisions from ignoring severity and constraints.** The unmodified path made 4.1% severe-consequence choices and 3.1% prohibited executions.
+7. **Inefficient reasoning:** fixed exploration's 75% irrelevant inspections, and the appraisal's own compute.
+
+Confident errors while learning were attributed 95% to knowledge or noise and 5% to available-but-unexamined information.
+
+**C. Did Sonara learn how to improve her reasoning?** Partly, and boundedly.
+* Experience changed *how she investigates*. Exploration value rose for variables whose examination proved informative and fell for the rest, per family. Held-out inspections became 82% relevant (0.14 / 0.17), against 35% for random allocation at the same budget.
+* That change produced better decisions than not investigating: +0.041 [+0.020, +0.063] held-out vs the otherwise identical `voi_fixed`, and +0.046 to +0.107 throughout the longitudinal run.
+* It produced better learning-time decisions than budget-matched random allocation: +0.018 [+0.004, +0.032]; held-out +0.021 [−0.001, +0.042].
+* It did **not** beat fixed generous exploration on held-out decisions (−0.033).
+* The process state's influence is exerted while learning. Resetting it at held-out changes nothing for the selected mechanism, and for learned trust the reset *improves* held-out decisions.
+* Neither the self-diagnosis drive nor learned trust improved decisions.
+
+**D. Does this improve decisions?**
+* Held-out expected reward: metacognitive +0.337, against +0.265 for the unmodified E12 path (+0.072 [+0.041, +0.104]) and +0.295 for never investigating (+0.041). Fixed exploration scores +0.369.
+* Regret against the permissible full-information oracle: 0.205 vs 0.277 (unmodified) and 0.173 (fixed exploration).
+* Pricing a scarce option's future use: +0.034 [+0.018, +0.050].
+
+**E. Does it improve efficiency?**
+* Investigation is 4.3× lower than fixed exploration while learning, with 57% vs 75% irrelevant inspections and +0.110 reward per learning experience.
+* Post hoc: over 600 learning experiences plus 600 decisions, +46.5 total expected reward over fixed exploration. Over 960 continuing experiences the held-out gap to fixed exploration shrinks to about −0.01 (n.s.).
+* The process appraisal costs about 5.6 ms per experience, and the extra store is about 0.7 MB over never investigating.
+
+**F. Does it preserve safety and knowledge?**
+* 0 prohibited actions in 892,160 decisions, including adversarial temptation, a fabricated +1000 reward estimate and large exploration bonuses (tests).
+* Knowledge is scoped: unrelated experience leaves another family's explanations content-identical (test), and families absent for whole phases retained held-out quality.
+* Process learning never edits knowledge (test). Restart continuation was identical in 20/20 longitudinal runs and in an independent process (test).
+
+**G. Does the improvement transfer?** **No reward transfer was demonstrated.**
+* Carried process knowledge changes investigation in a new family: fewer irrelevant inspections in the related family, −0.128 [−0.198, −0.064].
+* It also shows measurable negative transfer in the unrelated family: fewer examinations of the true cause, −0.041 [−0.081, −0.008].
+* Training reward differences are +0.001 and +0.006, both n.s.
+
+**H. What remains unsolved?**
+* The deferral trap: a value-of-learning for acting under pessimism, not count-based route exploration.
+* Learned investigation that also buys the knowledge fixed exploration buys, without its waste.
+* Transfer of process knowledge that pays.
+* Detecting that a learned investigation strategy stopped working: after the hidden-cause shift, delivery lost 0.05 and did not recover, and regime detection rarely fired.
+* Interaction-only relevance: the association test is marginal.
+* Myopic, one-variable value of information: it misses complementary pairs.
+* Selection-biased P(value) if examination ever depended on the hidden value.
+* Representation limits (parity) and confounded proxies, which need intervention.
+* All of this is synthetic, with binary variables and two routes. Nothing here acquires real-world concepts or modifies its own code.
+
+**I. What was delivered?** See the completion status below.
+
+#### Completion status
+
+* **Built + Integrated + Enabled (E12 investigation path):** `InvestigationWorld`; authorization and investigation context in `CognitiveState`; hard-constraint enforcement in `ActionSelector`; severity, deferral and value of information in `MeaningInterpreter`; partial observability, adequacy self-diagnosis with coverage, association evidence and variable frequencies in the explanation owner; `CognitiveControl` relevance learning via `OutcomeLearner.process_feedback`; the refiner's process appraisal. The selected policy `metacognitive` is the configuration for which the reported improvements were measured.
+* **Built + Integrated (controls, not selected):** learned trust (`meta_plus_trust`), the missing-information drive (inside `metacognitive`; measured unsupported by its ablation), option pricing (enabled in the multi-step study).
+* **Restart verified:** subprocess restoration continues identically (test); longitudinal serialize/restore 20/20.
+* **Full gate:** 193 tests locally, historical E12 gate reproduced exactly, and the GitHub research gate (all jobs, including the new `e12-metacognitive-learning` job and the Linux seed-1301 reference) passed on the freeze commit. The final status is recorded with the PR.
+* **Not claimed:** Sonara production integration, real-world concept learning, general learning-to-learn, self-modification.
+
+**Reproduce.**
+* `python -m scenario_chunking.causal_metacognition {benchmark|transfer|longitudinal|options} {dev|final}` writes `results-e12-metacognition/<study>-<set>/`.
+* `python -m scenario_chunking.causal_representation [final]`.
+* Tests: `tests/test_causal_metacognition.py`.
+* Committed summary: `docs/e12_metacognition_summary.json`. Protocol: `PROTOCOL` in `causal_metacognition.py` (frozen at `a369a82`).
+
+Research runner only; Sonara production unchanged.
+
 ## Working-memory activation — experimental candidate, unverified integration
 
 *Written 2026-10-10 against the Experiment 3 code base; it was left uncommitted and merged onto the post-E12 `main` on 2026-10-11. Its hypothesis has not been tested since.*

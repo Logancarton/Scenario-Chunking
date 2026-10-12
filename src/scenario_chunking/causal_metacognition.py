@@ -36,7 +36,7 @@ from .causal_experiment import (PRIMARY_EXPLORATION, TREATMENTS, UNIFIED, Causal
                                 paired_interval)
 from .environment import InvestigationWorld
 from .cognitive_control import CognitiveControl
-from .models import Action, EventKind, TruthStatus
+from .models import EventKind, TruthStatus
 from .state import CognitiveState
 
 VISIBLE = (("person", ("Alex", "Jordan")), ("delay", ("short", "long")),
@@ -474,7 +474,7 @@ class InvestigativeRun(CausalRun):
 
     def deliver(self, pending: dict) -> dict:
         state, chosen, observed = pending["state"], pending["chosen"], pending["observed"]
-        world, case, learn = pending["world"], pending["case"], pending["learn"]
+        learn = pending["learn"]
         acquired = self.clock.now
         delayed = acquired > pending["acted_at"]
         if delayed:
@@ -534,7 +534,6 @@ class InvestigativeRun(CausalRun):
             start, ("standard", "express"), project_out=frozenset(pending["constraints"]["hidden"]))
             if self.policy.diagnosis else 0.0)
         chosen = pending["chosen"]
-        values = pending["analyses"][-1]["values"]
         record = {"evidence_id": outcome.event_id, "scope": scope,
                   "inspected": {i["axis"]: i for i in pending["inspections"]},
                   "route": None if success is None else {
