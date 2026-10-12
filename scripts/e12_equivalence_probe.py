@@ -29,7 +29,11 @@ def canonical(value):
     if isinstance(value, (frozenset, set)):
         return sorted((canonical(x) for x in value), key=lambda x: json.dumps(x, sort_keys=True))
     if isinstance(value, dict):
-        pairs = [[canonical(k), canonical(v)] for k, v in value.items()]
+        # Memoized hypothetical queries and belief-query effort are computation
+        # accounting, not learned beliefs or thought content. Verify these costs
+        # separately, never mistake fewer evaluations for cognitive drift.
+        pairs = [[canonical(k), canonical(v)] for k, v in value.items()
+                 if k not in ("_unknown_cache", "belief_queries")]
         return sorted(pairs, key=lambda p: json.dumps(p[0], sort_keys=True))
     if dataclasses.is_dataclass(value) or hasattr(value, "__dict__"):
         return {"type": type(value).__name__, "attrs": canonical(vars(value))}
