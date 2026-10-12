@@ -54,8 +54,7 @@ def case_batch(seed):
     activity = cm.training_stream(seed, ("delivery",), 1, start=50002)[0]
     activity["activity"] = {
         "requirements": ["recipient_confirmed"],
-        "steps": [{"content": "Mid-route access revoked",
-                   "prohibited": ["standard", "express"]}],
+        "steps": [{"content": "Route status observed without changing constraints"}],
         "verification": [{"requirement": "recipient_confirmed",
                           "satisfied": False, "source": "independent_receiver", "final": True}],
     }
