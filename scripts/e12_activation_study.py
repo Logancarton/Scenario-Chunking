@@ -130,7 +130,21 @@ def summarize(results: dict) -> dict:
                           v["dense"][task]["expected_reward"], 8)
                     for v in results.values()],
             }
-    return {"summary": summary, "comparisons": comparison}
+            if len(results) >= 5:
+                comparison[mode + ":" + task]["reward_paired_interval"] = cm.paired_interval(
+                    comparison[mode + ":" + task]["paired_reward_deltas"],
+                    label="e12-activation:" + mode + ":" + task)
+    # Predeclared cross-family transfer: each seed contributes one averaged
+    # heldout reward difference, preventing cherry-picking one favorable family.
+    transfer_differences = [statistics.mean(
+        row["learned_sparse"]["heldout_" + target]["expected_reward"] -
+        row["fixed_sparse"]["heldout_" + target]["expected_reward"]
+        for target in TARGETS) for row in results.values()]
+    transfer = {"paired_deltas": transfer_differences,
+                "paired_interval": (cm.paired_interval(
+                    transfer_differences, label="e12-sparse-transfer")
+                    if len(results) >= 5 else None)}
+    return {"summary": summary, "comparisons": comparison, "transfer": transfer}
 
 
 def main():
