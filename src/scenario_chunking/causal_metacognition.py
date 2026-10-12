@@ -662,7 +662,7 @@ class InvestigativeRun(CausalRun):
         hindsight = {}
         start, scope = pending["start"], pending["scope"]
         if self.policy.explore == "learned":
-            initial = dict(pending["constraints"])
+            initial = dict(pending["initial_constraints"])
             analysis = self.interpreter.decision_analysis(
                 start, constraints=initial, permitted=pending["permitted"], calibrate=self._calibrate_for(pending["scope"]))
             hindsight = {axis: {"voi": voi, "cost": initial["hidden"][axis],
