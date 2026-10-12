@@ -536,7 +536,7 @@ jobs:
           import json
           r = json.load(open("results-e12-sparsity-smoke.json"))
           assert r["status"] == "exploratory"
-          assert len(r["summary"]) == 3 * 4
+          assert len(r["summary"]) == 3 * (4 + 3)  # four heldout families + three adaptation tracks per mode
           assert all(s["violations"] == 0 for s in r["summary"].values())
           assert r["summary"]["fixed_sparse:heldout_delivery"]["mean_active_axes"] == 2
           PYTHON
