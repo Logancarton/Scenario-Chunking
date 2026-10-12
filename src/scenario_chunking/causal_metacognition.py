@@ -495,6 +495,7 @@ class InvestigativeRun(CausalRun):
         signal = world.activity_step()
         if signal is None:
             pending["observed"] = world.execute(pending["chosen"])
+            pending["outcome_occurred_at"] = self.clock.now
             state.execution_status = "mechanically_finished"
             state.goal_status = "awaiting_verification"
             return {"phase": "action_outcome_pending", "goal_status": state.goal_status}
@@ -590,7 +591,8 @@ class InvestigativeRun(CausalRun):
         state, chosen, observed = pending["state"], pending["chosen"], pending["observed"]
         learn = pending["learn"]
         acquired = self.clock.now
-        delayed = acquired > pending["acted_at"]
+        outcome_at = pending.get("outcome_occurred_at", pending["acted_at"])
+        delayed = acquired > outcome_at
         if delayed:
             state.current_time = acquired
         cpu = process_time()
@@ -598,7 +600,7 @@ class InvestigativeRun(CausalRun):
                               content=observed.content, tags=observed.semantic_tags,
                               outcome=observed.outcome, cause=pending["attempt"].event_id,
                               reward=observed.reward, metadata=observed.metadata,
-                              occurred=pending["acted_at"] if delayed else None)
+                              occurred=outcome_at if delayed else None)
         state.apply_signal(observed, event_id=outcome.event_id)
         state.record_action(chosen)
         procedure = chosen.target

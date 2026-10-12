@@ -543,3 +543,8 @@ Programmatic callers may opt into process parallelism with `workers=2` or
 another explicit positive count; `workers=None` means one worker. Full studies
 still require substantial CPU, time, and memory, even sequentially. These are
 research-harness safeguards, **not demonstrated gains in Sonara cognition**.
+
+The legacy E12 module `python -m scenario_chunking.causal_experiment` also
+runs only a two-treatment, one-family smoke case by default. Pass `full`
+explicitly to reproduce the historical three-part E12 gate. These opt-ins
+change execution defaults only; they do not change any archived benchmark.
