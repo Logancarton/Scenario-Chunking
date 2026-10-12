@@ -7,6 +7,7 @@ behavior. No copy of the historical selector or learner is implemented.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import dataclasses
 import hashlib
 import json
@@ -23,7 +24,7 @@ def canonical(value):
         if isinstance(value, float) and not math.isfinite(value):
             return str(value)
         return value
-    if isinstance(value, (tuple, list)):
+    if isinstance(value, (tuple, list, deque)):
         return [canonical(x) for x in value]
     if isinstance(value, (frozenset, set)):
         return sorted((canonical(x) for x in value), key=lambda x: json.dumps(x, sort_keys=True))
