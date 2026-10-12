@@ -662,6 +662,83 @@ def reanalyze(output: str) -> dict:
 
 SEED_SETS = {"dev": DEV_SEEDS, "historical": HISTORICAL_SEEDS, "final": DIAGNOSTIC_FINAL_SEEDS}
 
+# ---------------------------------------------------------------------------
+# POST-HOC EXPLORATORY analysis (added after the final run; not pre-registered)
+# ---------------------------------------------------------------------------
+
+def exploratory_calibration(dev_output: str, eval_output: str,
+                            learner: str = "explanation_full") -> dict:
+    """Would calibrated probabilities with UNCHANGED discrimination decide better?
+
+    A per-action reliability map (RELIABILITY_BINS -> mean noiseless success
+    probability) is fitted on the DEV seeds' held-out decisions only, then
+    applied to the evaluation seeds. The map uses evaluation-only truth, so it
+    bounds what a calibration fix could achieve; it is not a learner mechanism.
+    Choices are the value argmax, which the live selector matched in every
+    audited decision. Also reports seed-level coupling of prediction and reward
+    differences against episodic_only.
+    """
+    dev = pickle.loads((Path(dev_output) / "results.pkl").read_bytes())
+    final = pickle.loads((Path(eval_output) / "results.pkl").read_bytes())
+    seeds = [r["seed"] for r in final]
+
+    def reference(results, stream, mode):
+        return [d for r in results for d in r["decisions"] if d["stream"] == stream
+                and d["host"] == mode and not d["substituted"]]
+
+    def bin_of(p):
+        return next(i for i, (lo, hi) in enumerate(RELIABILITY_BINS) if lo <= p < hi)
+
+    out = {"note": "post-hoc exploratory; fitted on dev seeds, applied once to evaluation seeds"}
+    for stream in ("matched", "online"):
+        fit = reference(dev, stream, learner)
+        maps = {}
+        for a in PROCEDURES:
+            table = {}
+            for d in fit:
+                table.setdefault(bin_of(d[f"p_{a}"]), []).append(
+                    1 - WORLD_NOISE if d[f"truth_{a}"] else WORLD_NOISE)
+            maps[a] = {i: statistics.mean(v) for i, v in table.items()}
+        rows = reference(final, stream, learner)
+        recalibrated = []
+        for d in rows:
+            p = {a: maps[a].get(bin_of(d[f"p_{a}"]), d[f"p_{a}"]) for a in PROCEDURES}
+            v = {a: action_value(p[a], a) for a in PROCEDURES}
+            chosen = min(PROCEDURES, key=lambda a: (-v[a], "route:" + a))
+            eu = {a: expected_utility(d["truth_" + a], a) for a in PROCEDURES}
+            recalibrated.append({"seed": d["seed"], "expected_reward": eu[chosen],
+                                 "express": chosen == "express",
+                                 "false_express": chosen == "express" and d["best"] == "standard",
+                                 "se": statistics.mean((p[a] - (1 - WORLD_NOISE if d["truth_" + a]
+                                                                else WORLD_NOISE)) ** 2
+                                                       for a in PROCEDURES)})
+        episodic = reference(final, stream, "episodic_only")
+        delta_eu = [x - y for x, y in zip(_per_seed(rows, seeds, "expected_reward"),
+                                          _per_seed(episodic, seeds, "expected_reward"))]
+        delta_se = [x - y for x, y in zip(_per_seed(rows, seeds, "all_action_se"),
+                                          _per_seed(episodic, seeds, "all_action_se"))]
+        delta_adv = [x - y for x, y in zip(_per_seed(rows, seeds, "advantage_error"),
+                                           _per_seed(episodic, seeds, "advantage_error"))]
+        out[stream] = {
+            "reliability_map": {a: {str(RELIABILITY_BINS[i]): v for i, v in sorted(m.items())}
+                                for a, m in maps.items()},
+            "original_expected_reward": _mean(rows, "expected_reward"),
+            "recalibrated_expected_reward": _mean(recalibrated, "expected_reward"),
+            "original_express_share": _mean([{"x": d["chosen"] == "express"} for d in rows], "x"),
+            "recalibrated_express_share": _mean([{"x": r["express"]} for r in recalibrated], "x"),
+            "original_false_express": _mean([{"x": d["chosen"] == "express" and d["best"] == "standard"}
+                                             for d in rows], "x"),
+            "recalibrated_false_express": _mean([{"x": r["false_express"]} for r in recalibrated], "x"),
+            "original_all_action_se": _mean(rows, "all_action_se"),
+            "recalibrated_all_action_se": _mean(recalibrated, "se"),
+            "recalibrated_minus_original": _paired(recalibrated, rows, seeds, "expected_reward",
+                                                   f"explore-cal-{stream}"),
+            "seed_correlation_with_episodic_delta": {
+                "delta_se_vs_delta_reward": statistics.correlation(delta_se, delta_eu),
+                "delta_advantage_error_vs_delta_reward": statistics.correlation(delta_adv, delta_eu)}}
+    return out
+
+
 if __name__ == "__main__":
     import sys
     name = sys.argv[1] if len(sys.argv) > 1 else "dev"
