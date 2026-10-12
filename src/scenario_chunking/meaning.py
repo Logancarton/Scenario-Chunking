@@ -117,7 +117,8 @@ class MeaningInterpreter:
     ROUTES = ("standard", "express")
 
     def decision_analysis(self, cues: frozenset[str], *, constraints: dict,
-                          permitted: frozenset[str], calibrate=None) -> dict:
+                          permitted: frozenset[str], calibrate=None,
+                          active_axes: frozenset[str] | None = None) -> dict:
         """E12 investigation valuation from the one learner's CURRENT beliefs only.
 
         V(route) = p * gain - (1 - p) * loss - cost with public stakes, so the
@@ -134,7 +135,8 @@ class MeaningInterpreter:
         # When all routes are prohibited, inspecting cannot improve the sole
         # permitted final choice (defer). Keep live route predictions but avoid
         # computing counterfactual contexts that cannot change the decision.
-        eligible = unknown if permitted else []
+        eligible = ([axis for axis in unknown if active_axes is None or axis in active_axes]
+                    if permitted else [])
         queries, index = [cues], {}
         for axis in eligible:
             for value in constraints["domains"][axis]:
@@ -172,14 +174,15 @@ class MeaningInterpreter:
                 "unknown": unknown, "belief_queries": len(queries) * len(self.ROUTES)}
 
     def investigation_values(self, cues: frozenset[str], actions: list[Action], *,
-                             constraints: dict, permitted: frozenset[str], calibrate=None) -> dict:
+                             constraints: dict, permitted: frozenset[str], calibrate=None,
+                          active_axes: frozenset[str] | None = None) -> dict:
         """Translate beliefs into values for every candidate, including inspection.
 
         Inspecting X is valued as deciding now plus the information value of X
         minus its public cost; the selector compares it with acting directly.
         """
         analysis = self.decision_analysis(cues, constraints=constraints, permitted=permitted,
-                                          calibrate=calibrate)
+                                          calibrate=calibrate, active_axes=active_axes)
         values, predictions = dict(analysis["values"]), dict(analysis["predictions"])
         for action in actions:
             if action.kind == "inspect":
