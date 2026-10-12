@@ -564,6 +564,26 @@ class InvestigativeRun(CausalRun):
         return {"goal_status": status, "goal_complete": state.goal_complete,
                 "evidence_id": event.event_id, "source": signal.metadata["goal_check"]["source"]}
 
+    def step_case(self, case: dict, *, learn: bool = True,
+                  behavior: str | None = None) -> dict:
+        """Opt-in end-to-end activity through the same E12 live owners."""
+        if not case.get("activity"):
+            return super().step_case(case, learn=learn, behavior=behavior)
+        pending = self.act(case, learn=learn, behavior=behavior)
+        while pending["observed"] is None:
+            self.advance_activity(pending)
+        row = self.deliver(pending)
+        checks = []
+        while True:
+            evidence = self.verify_activity(pending)
+            if evidence is None:
+                break
+            checks.append(evidence)
+        row["verification_evidence"] = checks
+        row["goal_status_final"] = pending["state"].goal_status
+        row["goal_verified"] = pending["state"].goal_complete
+        return row
+
     def deliver(self, pending: dict) -> dict:
         if pending.get("activity") and pending["observed"] is None:
             raise ValueError("cannot deliver outcome before activity has finished")

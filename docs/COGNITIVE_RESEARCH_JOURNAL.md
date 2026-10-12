@@ -1324,3 +1324,8 @@ Goal-evidence validation is synthetic and source-grounded, not independent
 real-world corroboration. Goal outcomes do not yet update the slow process
 learner, and no comparative sparse-compute, transfer, deferral-trap, or
 learning-to-learn conclusion follows. Preserve historical PR #10 baselines.
+
+The opt-in activity is also callable through `InvestigativeRun.step_case`, which
+routes begin → intermediate observations → action outcome → independent
+verification through the live E12 research sequence. Manual act/advance/deliver/
+verify calls remain available to test a suspended or restarted activity.

@@ -118,3 +118,18 @@ def test_goal_evidence_requires_provenance_and_rejects_out_of_order():
     assert state.verify_goal(signal(True, "recipient"), event_id="old",
                              occurred_at=2, observed_at=11) == "awaiting_verification"
     assert not state.goal_complete
+
+
+def test_live_step_case_runs_continuous_path_without_oracle_goal_label():
+    run = cm.InvestigativeRun(31, "metacognitive", exploration=0)
+    case = activity_case(
+        steps=[{"content": "Receiver awaiting response"}],
+        verification=[{"requirement": "recipient_confirmed", "satisfied": True,
+                       "source": "recipient_ack"}])
+    row = run.step_case(case, learn=False, behavior="standard")
+    assert row["outcome"] == "success"
+    assert row["goal_status"] == "awaiting_verification"
+    assert row["goal_status_final"] == "completed_verified"
+    assert row["goal_verified"] is True
+    assert len(row["verification_evidence"]) == 1
+    assert row["activity_reassessments"] == 0
