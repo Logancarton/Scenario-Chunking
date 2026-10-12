@@ -77,6 +77,14 @@ class CognitiveState:
     key_observations: dict[str, list[tuple[str, bool, float, str]]] = field(default_factory=dict)
     beliefs: dict[str, object] = field(default_factory=dict)
     goal_complete: bool = False
+    # Opt-in E12 continuing activity. The goal owner is this existing state,
+    # not an action outcome or a new planner.
+    activity_id: str | None = None
+    goal_requirements: frozenset[str] = frozenset()
+    goal_evidence: dict[str, tuple[bool, float, str, str]] = field(default_factory=dict)
+    goal_status: str = "active"
+    execution_status: str = "not_started"
+    progress_observations: list[dict] = field(default_factory=list)
     track_outcome_contradictions: bool = False  # Historical scorer remains a frozen comparison
 
     # Cross-experience E11 context; events are stored in the existing memory.
@@ -228,8 +236,66 @@ class CognitiveState:
             self.inspected.add(str(meta["inspected"]))
         if "asked_person" in meta:
             self.asked_people.add(str(meta["asked_person"]))
-        if signal.outcome == "success":
+        # Legacy worlds have no explicit goal criteria. Opt-in continuing
+        # activities NEVER equate mechanical success with verified goal success.
+        if signal.outcome == "success" and not self.goal_requirements:
             self.goal_complete = True
+
+    def begin_goal_activity(self, activity_id: str, requirements) -> None:
+        """Keep a goal open until independent, sourced observations cover its criteria."""
+        required = frozenset(requirements)
+        if self.activity_id is not None or not activity_id or not required:
+            raise ValueError("an activity requires one unique identity and nonempty criteria")
+        self.activity_id = str(activity_id)
+        self.goal_requirements = required
+        self.goal_status = "active"
+        self.goal_complete = False
+        self.execution_status = "active"
+
+    def observe_activity_progress(self, *, event_id: str, occurred_at: float,
+                                  observed_at: float, description: str) -> None:
+        if self.activity_id is None:
+            raise ValueError("no continuing activity")
+        if len(self.progress_observations) >= 64:
+            self.progress_observations.pop(0)
+        self.progress_observations.append({
+            "event_id": event_id, "occurred_at": float(occurred_at),
+            "observed_at": float(observed_at), "description": description})
+
+    def verify_goal(self, signal: EnvironmentSignal, *, event_id: str,
+                    occurred_at: float, observed_at: float) -> str:
+        """Assess source evidence, never an evaluator's oracle success label."""
+        if self.activity_id is None or not event_id:
+            raise ValueError("no identified activity or evidence")
+        if signal.kind != EventKind.OBSERVATION or signal.truth_status.value != "fact":
+            raise ValueError("goal verification requires a factual observation")
+        check = signal.metadata.get("goal_check")
+        if not isinstance(check, dict):
+            raise ValueError("goal verification requires sourced criteria")
+        requirement, source = check.get("requirement"), check.get("source")
+        if requirement not in self.goal_requirements or not isinstance(source, str) or not source:
+            raise ValueError("unknown requirement or missing evidence provenance")
+        if type(check.get("satisfied")) is not bool:
+            raise ValueError("goal observation must be a measured boolean")
+        old = self.goal_evidence.get(requirement)
+        if old and old[1] > occurred_at:
+            return self.goal_status  # late acquisition is not necessarily newer truth
+        if old and old[1] == occurred_at and old[0] != check["satisfied"]:
+            self.goal_status, self.goal_complete = "uncertain", False
+            return self.goal_status
+        self.goal_evidence[requirement] = (
+            check["satisfied"], float(occurred_at), str(source), event_id)
+        if all(k in self.goal_evidence and self.goal_evidence[k][0]
+               for k in self.goal_requirements):
+            self.goal_status = "completed_verified"
+        elif check["satisfied"]:
+            self.goal_status = "partially_complete"
+        elif check.get("final", False):
+            self.goal_status = "failed"
+        else:
+            self.goal_status = "awaiting_verification"
+        self.goal_complete = self.goal_status == "completed_verified"
+        return self.goal_status
 
     def record_action(self, action: Action) -> None:
         self.attempted_actions.append(action.label)

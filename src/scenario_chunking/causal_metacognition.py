@@ -359,9 +359,13 @@ class InvestigativeRun(CausalRun):
             seed=self.seed, family=family, index=epoch * 1000000 + index, visible=case["visible"],
             hidden=case["hidden"], domains={a: HIDDEN[a] for a in case["hidden"]},
             truths=case["truths"], noise=case["noise"], inspect_costs=case["inspect_costs"],
-            stakes=case["stakes"], prohibited=case["prohibited"], defer_value=DEFER, epoch=epoch)
+            stakes=case["stakes"], prohibited=case["prohibited"], defer_value=DEFER,
+            epoch=epoch, activity=case.get("activity"))
         state = CognitiveState(f"e12m:{self.seed}:{family}:{epoch}:{index}", goal_id="investigative_dispatch")
         state.thought_key = "dispatch:" + family
+        if case.get("activity"):
+            state.begin_goal_activity(
+                f"dispatch:{family}:{epoch}:{index}", case["activity"]["requirements"])
         now = self.clock.advance(elapsed=case.get("elapsed", 1.0))
         constraints = world.public_constraints()
         constraints["budget"] = 0 if self.policy.inspect == "none" else len(constraints["hidden"])
@@ -463,16 +467,106 @@ class InvestigativeRun(CausalRun):
             chosen = decision.action
         attempt = self._event(state, kind=EventKind.ACTION, status=TruthStatus.ATTEMPT,
                               content="Dispatch " + chosen.label, tags=primitive, action=chosen)
-        observed = world.execute(chosen)
+        activity = bool(case.get("activity"))
+        if activity:
+            signal = world.begin_activity(chosen)
+            event = self._event(state, kind=EventKind.OBSERVATION, status=TruthStatus.FACT,
+                                content=signal.content, tags=signal.semantic_tags,
+                                metadata=signal.metadata)
+            state.observe_activity_progress(event_id=event.event_id, occurred_at=now,
+                                            observed_at=now, description=signal.content)
+            observed = None
+        else:
+            observed = world.execute(chosen)
         return {"case": case, "world": world, "state": state, "start": start, "primitive": primitive,
                 "learner_cues": primitive, "constraints": constraints, "permitted": permitted,
                 "hits": hits, "stats": stats, "analyses": analyses, "greedy": greedy,
                 "inspections": inspections, "decision": decision, "chosen": chosen,
                 "stage_a": stage_a, "attempt": attempt, "observed": observed, "acted_at": now,
                 "learn": learn, "scope": scope, "calibrate": calibrate,
-                "decision_cpu": process_time() - cpu}
+                "decision_cpu": process_time() - cpu,
+                "activity": activity, "activity_revisions": 0, "activity_reassessments": 0}
+
+    def advance_activity(self, pending: dict) -> dict:
+        """One observed execution step through existing owners; no fake 'think' action."""
+        if not pending.get("activity") or pending["observed"] is not None:
+            raise ValueError("no unfinished activity")
+        state, world = pending["state"], pending["world"]
+        signal = world.activity_step()
+        if signal is None:
+            pending["observed"] = world.execute(pending["chosen"])
+            state.execution_status = "mechanically_finished"
+            state.goal_status = "awaiting_verification"
+            return {"phase": "action_outcome_pending", "goal_status": state.goal_status}
+        now = self.clock.advance(elapsed=signal.metadata["elapsed"])
+        previous_cues, old_forbidden = pending["primitive"], state.prohibited
+        event = self._event(state, kind=EventKind.OBSERVATION, status=TruthStatus.FACT,
+                            content=signal.content, tags=signal.semantic_tags,
+                            metadata=signal.metadata)
+        state.apply_signal(signal, event_id=event.event_id)
+        state.observe_activity_progress(event_id=event.event_id, occurred_at=now,
+                                        observed_at=now, description=signal.content)
+        state.authorize(signal.metadata["prohibited"])
+        primitive = world.public_cues()
+        state.incremental_context(primitive, now)
+        pending["primitive"] = primitive
+        pending["learner_cues"] = primitive
+        changed = primitive != previous_cues or state.prohibited != old_forbidden
+        if changed:
+            constraints = world.public_constraints()
+            permitted = frozenset(p for p in ("standard", "express") if p not in state.prohibited)
+            actions = [a for a in state.candidate_actions() if a.kind == "route"]
+            analysis = self.interpreter.investigation_values(
+                primitive, actions, constraints=constraints, permitted=permitted,
+                calibrate=pending["calibrate"])
+            values, predictions = dict(analysis["values"]), analysis["predictions"]
+            decision = self.selector.select(
+                state, actions, pending["hits"], refine=True,
+                transfer_scores={k: v / 2 for k, v in values.items()},
+                transfer_context={"cognitive_mode": "incremental",
+                                  "candidate_values": values, "predictions": predictions,
+                                  "risk_price": 0.0, "reason": "mid_execution_reassessment"})
+            if decision.action.label != pending["chosen"].label:
+                pending["activity_revisions"] += 1
+                pending["chosen"] = decision.action
+                pending["attempt"] = self._event(
+                    state, kind=EventKind.ACTION, status=TruthStatus.ATTEMPT,
+                    content="Revised dispatch " + decision.action.label,
+                    tags=primitive, action=decision.action)
+            pending["analyses"].append(analysis)
+            pending["greedy"].append(max(
+                [k for k in ("route:standard", "route:express", "route:defer")
+                 if k == "route:defer" or k.split(":")[1] in permitted],
+                key=lambda k: (values[k], k == "route:defer")))
+            pending["decision"] = decision
+            pending["permitted"] = permitted
+            pending["constraints"] = constraints
+            pending["activity_reassessments"] += 1
+        return {"phase": "observed", "evidence_id": event.event_id,
+                "reassessed": changed, "action": pending["chosen"].label,
+                "goal_status": state.goal_status}
+
+    def verify_activity(self, pending: dict) -> dict | None:
+        """New independent evidence may arrive later, including after a restart."""
+        if not pending.get("activity") or pending["observed"] is None:
+            raise ValueError("no completed continuing activity")
+        signal = pending["world"].goal_evidence_step()
+        if signal is None:
+            return None
+        now = self.clock.advance(elapsed=signal.metadata["elapsed"])
+        state = pending["state"]
+        event = self._event(state, kind=EventKind.OBSERVATION, status=TruthStatus.FACT,
+                            content=signal.content, tags=signal.semantic_tags,
+                            metadata=signal.metadata)
+        state.apply_signal(signal, event_id=event.event_id)
+        status = state.verify_goal(signal, event_id=event.event_id,
+                                   occurred_at=now, observed_at=now)
+        return {"goal_status": status, "goal_complete": state.goal_complete,
+                "evidence_id": event.event_id, "source": signal.metadata["goal_check"]["source"]}
 
     def deliver(self, pending: dict) -> dict:
+        if pending.get("activity") and pending["observed"] is None:
+            raise ValueError("cannot deliver outcome before activity has finished")
         state, chosen, observed = pending["state"], pending["chosen"], pending["observed"]
         learn = pending["learn"]
         acquired = self.clock.now
@@ -516,8 +610,13 @@ class InvestigativeRun(CausalRun):
                     appraisal, relevance=self.policy.explore == "learned",
                     trust=self.policy.trust, diagnosis=self.policy.diagnosis)
         # Rows are returned to the harness, not retained: learned state stays bounded.
-        return self._measure(pending, outcome, update, appraisal, process,
-                             learn_cpu=process_time() - cpu)
+        row = self._measure(pending, outcome, update, appraisal, process,
+                            learn_cpu=process_time() - cpu)
+        if pending.get("activity"):
+            row.update(goal_status=state.goal_status, goal_verified=state.goal_complete,
+                       activity_reassessments=pending["activity_reassessments"],
+                       activity_revisions=pending["activity_revisions"])
+        return row
 
     def _appraise(self, pending, outcome, success, prediction, now, gains) -> dict:
         """Hindsight with UPDATED knowledge, from the visible context the decision started in."""
