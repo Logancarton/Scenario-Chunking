@@ -83,12 +83,15 @@ class CognitiveControl:
         ordered = sorted(set(axes))
         if mode == "dense":
             return frozenset(ordered)
-        if mode not in ("fixed_sparse", "learned_sparse") or limit < 1:
+        if mode not in ("fixed_sparse", "learned_sparse", "adaptive_sparse") or limit < 1:
             raise ValueError("invalid sparse activation policy")
         if len(ordered) <= limit:
             return frozenset(ordered)
         if mode == "fixed_sparse":
             return frozenset(ordered[:limit])
+        if mode == "adaptive_sparse":
+            ranked = sorted(ordered, key=lambda a: (-self.reasoning_priority(scope, a), a))
+            return frozenset(ranked[:limit])
         ranked = sorted(ordered, key=lambda a: (-self.relevance_belief(scope, a), a))
         chosen = ranked[:limit]
         diagnosed = any(a.get("scope") == list(scope) and
@@ -99,6 +102,52 @@ class CognitiveControl:
             if skipped:
                 chosen[-1] = skipped[(experience // 7) % len(skipped)]
         return frozenset(chosen)
+
+    def reasoning_priority(self, scope: tuple, axis: str, competence: float = 0.0) -> float:
+        """Bounded, uncertainty-aware attention priority based on observed process history.
+
+        A previously unexamined axis receives an optimism bonus; feedback that
+        examining it harmed prediction lowers its priority. Neither the hidden
+        value nor the true task rule is consulted. Historical sparse modes do
+        not use this method.
+        """
+        history = [a["reasoning"] for a in self.adjustments
+                   if tuple(a.get("scope", ())) == scope and "reasoning" in a]
+        examined = [h["inspections"][axis] for h in history if axis in h["inspections"]]
+        n = len(examined)
+        gain = sum(max(-1.5, min(1.5, float(x.get("gain", 0.0))))
+                   for x in examined) / (n + 3)
+        novelty = (0.17 * (1.0 - competence) *
+                   math.sqrt(math.log(2.0 + len(history)) / (1.0 + n)))
+        return self.relevance_belief(scope, axis) + novelty + 0.35 * gain
+
+    def reconsider_axis(self, scope: tuple, axes, active: frozenset[str], *,
+                        adequacy: dict, competences: dict[str, float],
+                        query_cost: float = 0.02) -> tuple[str, frozenset[str]] | None:
+        """Suggest at most one costed, same-budget hypothesis replacement.
+
+        This evaluates a potential reasoning investment, NOT its answer.
+        The caller performs the actual belief queries and keeps final action
+        selection with the sole ActionSelector.
+        """
+        if adequacy["status"] not in ("needs_reconsideration", "world_uncertainty"):
+            return None
+        omitted = sorted(set(axes) - set(active))
+        if not omitted:
+            return None
+        axis = max(omitted, key=lambda a: (self.reasoning_priority(
+            scope, a, competences.get(a, 0.0)), -len(a), a))
+        uncertainty = max(0.0, min(1.0, adequacy["uncertainty"]))
+        ambiguity = max(0.0, 0.25 - adequacy["margin"])
+        relevance = self.relevance_belief(scope, axis)
+        benefit = ((0.48 * uncertainty + 0.35 * ambiguity +
+                    0.25 * self.drive.get(scope, 0.0)) *
+                   (0.15 + relevance) * (1.0 - competences.get(axis, 0.0)))
+        if benefit <= query_cost * 4:
+            return None
+        incumbent = min(active, key=lambda a: (self.reasoning_priority(
+            scope, a, competences.get(a, 0.0)), a))
+        return axis, frozenset((set(active) - {incumbent}) | {axis})
 
     def exploration_value(self, scope: tuple, axis: str, competence: float, *,
                           diagnosis: bool = True) -> float:

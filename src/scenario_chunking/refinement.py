@@ -614,6 +614,37 @@ class ProgressiveRefiner:
                 "explanation": update.get("explanation"), "revised": update.get("revised", False),
                 "open_reviews": [r["review_id"] for r in thread.open_reviews]}
 
+    def assess_incremental_adequacy(self, state: CognitiveState, analysis: dict, *,
+                                    permitted: frozenset[str], omitted: int) -> dict:
+        """Predecision process appraisal using ONLY public predictions and values.
+
+        Distinguishes restricted actions, unfavorable known choices, gaps in
+        evidence and possible reasoning insufficiency. The last is a signal
+        to consider an extra bounded pass, not a diagnosis of an omitted cause.
+        """
+        if not permitted:
+            status = "safety"
+            return {"status": status, "uncertainty": 0.0, "margin": 0.0}
+        choices = [analysis["values"]["route:" + p] for p in sorted(permitted)]
+        choices.append(analysis["values"]["route:defer"])
+        ordered = sorted(choices, reverse=True)
+        margin = ordered[0] - ordered[1]
+        uncertainty = max(analysis["predictions"]["route:" + p]["uncertainty"]
+                          for p in permitted)
+        if not analysis["unknown"]:
+            status = "adequate"
+        elif ordered[0] == analysis["values"]["route:defer"] and uncertainty < 0.2:
+            status = "negative_evidence"
+        elif uncertainty < 0.2 and margin >= 0.25:
+            status = "adequate"
+        elif ordered[0] == analysis["values"]["route:defer"]:
+            status = "world_uncertainty"
+        elif omitted:
+            status = "needs_reconsideration"
+        else:
+            status = "world_uncertainty"
+        return {"status": status, "uncertainty": uncertainty, "margin": margin}
+
     def appraise_process(self, state: CognitiveState, *, record: dict, hindsight: dict,
                          unexplained: float, now: float, information_gain: dict | None = None,
                          association: dict | None = None) -> dict:
@@ -652,6 +683,13 @@ class ProgressiveRefiner:
                      "decision_followed_values": record["followed_values"],
                      "constraints_respected": record["permissible"],
                      "effort": dict(record["effort"])}
+        if record.get("recovery") is not None:
+            # Opt-in adaptive policy only. A deferral has no fabricated route
+            # outcome, but an unhelpful computation can still be recorded.
+            appraisal["recovery"] = dict(record["recovery"])
+            appraisal["inspection_feedback"] = {
+                axis: {"gain": item.get("gain", 0.0)}
+                for axis, item in appraisal["information_gain"].items()}
         thread = self.thread(state)
         thread.process_appraisals.append(appraisal)
         del thread.process_appraisals[:-self.max_versions]

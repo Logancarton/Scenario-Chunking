@@ -1368,3 +1368,16 @@ verify calls remain available to test a suspended or restarted activity.
 python scripts/e12_disagreement_audit.py results-e12-sparsity-confirmatory.json \
   --max-seeds 1 --max-cases 6 --output results-e12-disagreement-audit.json
 ```
+
+
+## Experiment 12 — opt-in bounded adaptive reasoning (candidate, 2026-10-12)
+
+**Status: built pending GitHub verification, not independently validated learning-to-learn.** This work is stacked on the unmerged PR #13 audit. It leaves original `dense`, `fixed_sparse`, and legacy `learned_sparse` controls intact, including the historical seventh-experience probe, to avoid altering the comparison arm. The *new* `adaptive_sparse` policy uses costed, uncertainty-aware attention and at most one additional same-budget hypothesis replacement, without scheduled probes.
+
+**Cognitive ownership:** `ProgressiveRefiner.assess_incremental_adequacy` distinguishes authorization, evidence-backed unfavorable routes, uncertainty and possible insufficiency using public predictions. `CognitiveControl` chooses which omitted hypothesis might justify the expense based on learned relevance and a bounded history of actual reasoning-process feedback. `MeaningInterpreter` performs both conditional value computations. `InvestigativeRun` only sequences the second pass and returns its real belief-query cost; `ActionSelector` remains the sole action authority. `OutcomeLearner.process_feedback` archives process evidence with the original outcome ID, with separate evidence for an inspection's prequential predictive gain and a probe's model-estimated VOI. This is not proof that an omitted variable caused an error.
+
+**Important constraints:** The recovery step estimates utility using existing model uncertainty and variable relevance; model uncertainty can be miscalibrated. Accepted reconsiderations can change action choice without any new world evidence and thus are not guaranteed to improve it. Deferral does not generate a fabricated failure; observing that a hypothetical probe was unhelpful is not outcome feedback. Only an actually inspected variable followed by a route outcome can yield prequential predictive gain. The existing severity-aware action values justify keeping `risk_price=0.0` in the E12 selector; a second failure-severity penalty would double-count public loss.
+
+**Evidence / evaluation:** `scripts/e12_adaptive_study.py` freezes a 12-seed fresh confirmatory cohort before result inspection, compares original dense/fixed/learned controls, adaptive reasoning, and recovery/process-learning ablations, with common pretraining and openly acknowledged on-policy divergence. It reports reward, regret, deferrals, safety, belief work, CPU and peak traced allocations. GitHub CI runs a small *exploratory* smoke only; a confirmatory performance/transfer result must not be claimed until that independent fixed cohort has actually executed. The original 40-seed historical JSON is still unavailable in GitHub, so its case-specific causes remain unverified.
+
+**Completion gate:** Require live recovery evidence, real inspection-to-outcome feedback, a measurable later activation-policy change, no regressions in full CI or original-baseline equivalence, restart identity, and an independent performance and compute-cost comparison before describing adaptive learning to reason as integrated and beneficial.

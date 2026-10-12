@@ -981,7 +981,7 @@ class OutcomeLearner:
         return round(min(1.0, max(0.0, share)), 9)
 
     def process_feedback(self, appraisal: dict, *, relevance: bool = True, trust: bool = True,
-                         diagnosis: bool = True) -> dict:
+                         diagnosis: bool = True, adaptive: bool = False) -> dict:
         """Process learning from the thought owner's appraisal of one experience.
 
         The appraisal says what was examined, what the outcome was, and which
@@ -1007,9 +1007,17 @@ class OutcomeLearner:
                 if item["revealed"] > 0:
                     control.record_relevance(scope, axis, item["log_bayes_factor"])
                     changed.append("relevance:" + axis)
-        if changed:
-            control.audit({"evidence_id": appraisal.get("evidence_id"), "scope": list(scope),
-                           "changed": changed, "error": appraisal.get("error")})
+        if changed or adaptive:
+            record = {"evidence_id": appraisal.get("evidence_id"), "scope": list(scope),
+                      "changed": changed, "error": appraisal.get("error")}
+            if adaptive:
+                # Process evidence shares its ONE outcome provenance; no extra
+                # world observation or ungrounded action failure is invented.
+                record["reasoning"] = {
+                    "inspections": appraisal.get("inspection_feedback", {}),
+                    "recovery": appraisal.get("recovery")}
+                changed.append("reasoning")
+            control.audit(record)
         return {"updated": changed}
 
     def incremental_prediction(self, cues: frozenset[str], procedure: str) -> dict:
