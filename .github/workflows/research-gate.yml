@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "experiment/e12-unified-cognitive-learning", "experiment/e12-metacognitive-learning", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "experiment/e12-unified-cognitive-learning", "experiment/e12-metacognitive-learning", "research/e12-adaptive-reasoning-loop", "main"]
   pull_request:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected", "experiment/predictive-decision-value-e10"]
   workflow_dispatch:
@@ -552,4 +552,41 @@ jobs:
           path: |
             results-e12-sparsity-smoke.json
             results-e12-disagreement-smoke.json
+          if-no-files-found: ignore
+
+  e12-adaptive-feedback-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Adaptive recovery, permissions and persistence through the live pathway
+        run: python -m pytest -q tests/test_e12_adaptive_reasoning.py
+      - name: Complete regression suite
+        run: python -m pytest -q
+      - name: Independent protocol exploratory smoke (not confirmatory)
+        run: |
+          python scripts/e12_adaptive_study.py --seeds 43 --pretrain 2 --adapt 1 --heldout 2 --output results-e12-adaptive-smoke.json
+          python - <<'PY'
+          import json
+          r = json.load(open("results-e12-adaptive-smoke.json"))
+          assert r["status"] == "exploratory"
+          assert len(r["summary"]) == 6 * 4
+          assert all(v["violations"] == 0 for v in r["summary"].values())
+          assert r["summary"]["adaptive_sparse:delivery"]["mean_active_axes"] <= 2
+          PY
+      - name: Compile and explicitly scoped diff check
+        run: |
+          python -m compileall -q src tests scripts
+          git diff --check 7a7ffec4814383fcf0446228b26df016022dde75 HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e12-adaptive-exploratory-smoke
+          path: results-e12-adaptive-smoke.json
           if-no-files-found: ignore

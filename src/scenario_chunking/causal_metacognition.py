@@ -271,10 +271,12 @@ class Policy:
     competence_scale: float | None = None
     activation: str = "dense"  # dense | fixed_sparse | learned_sparse
     activation_limit: int = 2  # counterfactual variable axes per episode
+    recovery_enabled: bool = True    # opt-out same-budget second pass
+    process_learning: bool = True    # ablation: fixed process control
 
     @property
     def process(self) -> bool:
-        return self.explore == "learned" or self.trust or self.diagnosis
+        return self.explore == "learned" or self.trust or self.diagnosis or self.activation == "adaptive_sparse"
 
 
 POLICIES = {
@@ -359,6 +361,38 @@ class InvestigativeRun(CausalRun):
         k = int(rate) + (self.policy_rng.random() < rate - int(rate))
         return self.policy_rng.sample(sorted(hidden), min(k, len(hidden)))
 
+    def _adaptive_recovery(self, state, cues, analysis, scope, constraints,
+                           permitted, calibrate, active_axes) -> tuple:
+        """Sequence one optional re-evaluation through existing cognitive owners."""
+        assessment = self.refiner.assess_incremental_adequacy(
+            state, analysis, permitted=permitted,
+            omitted=len(set(constraints["hidden"]) - set(active_axes)))
+        competences = {a: self.learner.competence(cues, a) for a in constraints["hidden"]}
+        suggestion = self.learner.control.reconsider_axis(
+            scope, constraints["hidden"], active_axes,
+            adequacy=assessment, competences=competences)
+        if suggestion is None:
+            return assessment, None, None, None
+        axis, alternative = suggestion
+        candidates = [a for a in state.candidate_actions()
+                      if a.kind != "inspect" or a.target in alternative]
+        trial = self.interpreter.investigation_values(
+            cues, candidates, constraints=constraints, permitted=permitted,
+            calibrate=calibrate, active_axes=alternative)
+        finals = ["route:defer"] + ["route:" + p for p in sorted(permitted)]
+        old_best = max(finals, key=lambda p: (analysis["values"][p], p == "route:defer"))
+        new_best = max(finals, key=lambda p: (trial["values"][p], p == "route:defer"))
+        bonus = (self.learner.control.exploration_value(
+            scope, axis, competences[axis]) if self.policy.explore == "learned" else 0.0)
+        net_voi = trial["voi"].get(axis, 0.0) + bonus - constraints["hidden"][axis]
+        accepted = old_best != new_best or net_voi > 0
+        recovery = {"axis": axis, "before": sorted(active_axes), "after": sorted(alternative),
+                    "accepted": accepted, "changed_preferred_route": old_best != new_best,
+                    "net_information_value": round(net_voi, 9),
+                    "additional_belief_queries": trial["belief_queries"],
+                    "status": assessment["status"]}
+        return assessment, recovery, (trial if accepted else None), (candidates if accepted else None)
+
     def act(self, case: dict, *, learn: bool = True, behavior: str | None = None) -> dict:
         family, epoch, index = case["family"], case["epoch"], case["index"]
         if (family, epoch, index) in self.seen:
@@ -394,6 +428,7 @@ class InvestigativeRun(CausalRun):
             scope, constraints["hidden"], mode=self.policy.activation,
             limit=self.policy.activation_limit, experience=self.clock.experiences)
         inspections, greedy, analyses, option_costs, cpu = [], [], [], None, process_time()
+        recovery_checked, recovery, recovery_extra_queries, adequacy = False, None, 0, None
         primitive = start  # First public cues were already acquired and installed in state.
         while True:
             if behavior is not None:
@@ -429,6 +464,23 @@ class InvestigativeRun(CausalRun):
             finals = [p for p in ("route:standard", "route:express", "route:defer")
                       if p == "route:defer" or p.split(":")[1] in permitted]
             greedy.append(max(finals, key=lambda p: (values[p], p == "route:defer")))
+            if (self.policy.activation == "adaptive_sparse" and self.policy.recovery_enabled
+                    and not recovery_checked):
+                recovery_checked = True
+                adequacy, recovery, trial, trial_actions = self._adaptive_recovery(
+                    state, primitive, analysis, scope, constraints, permitted,
+                    calibrate, active_axes)
+                if recovery is not None:
+                    if trial is not None:
+                        # Retain the initial pass in the real-work accounting.
+                        recovery_extra_queries += analysis["belief_queries"]
+                        active_axes = frozenset(recovery["after"])
+                        actions, analysis = trial_actions, trial
+                        analyses[-1] = analysis
+                        values, predictions = dict(analysis["values"]), analysis["predictions"]
+                        greedy[-1] = max(finals, key=lambda p: (values[p], p == "route:defer"))
+                    else:
+                        recovery_extra_queries += recovery["additional_belief_queries"]
             if option_costs is None:
                 option_costs = {}
                 if self.policy.option and case.get("horizon"):
@@ -502,7 +554,9 @@ class InvestigativeRun(CausalRun):
                 "learn": learn, "scope": scope,
                 "decision_cpu": process_time() - cpu,
                  "active_axes": tuple(sorted(active_axes)),
-                "activity": activity, "activity_revisions": 0, "activity_reassessments": 0}
+                "activity": activity, "activity_revisions": 0, "activity_reassessments": 0,
+                "recovery": recovery, "recovery_extra_queries": recovery_extra_queries,
+                "reasoning_adequacy": adequacy}
 
     def advance_activity(self, pending: dict) -> dict:
         """One observed execution step through existing owners; no fake 'think' action."""
@@ -643,11 +697,12 @@ class InvestigativeRun(CausalRun):
                     pending["learner_cues"], procedure, success=success, evidence_id=outcome.event_id,
                     allow_contrast=False, persist=self.treatment.persist)
                 self.refiner.record_causal_revision(state, update, outcome, now=acquired)
-            if self.policy.process:
+            if self.policy.process and self.policy.process_learning:
                 appraisal = self._appraise(pending, outcome, success, prediction, acquired, gains)
                 process = self.learner.process_feedback(
                     appraisal, relevance=self.policy.explore == "learned",
-                    trust=self.policy.trust, diagnosis=self.policy.diagnosis)
+                    trust=self.policy.trust, diagnosis=self.policy.diagnosis,
+                    adaptive=self.policy.activation == "adaptive_sparse")
         # Rows are returned to the harness, not retained: learned state stays bounded.
         row = self._measure(pending, outcome, update, appraisal, process,
                             learn_cpu=process_time() - cpu)
@@ -682,6 +737,14 @@ class InvestigativeRun(CausalRun):
                   "permissible": pending["state"].permissible(chosen),
                   "effort": {"belief_queries": sum(a["belief_queries"] for a in pending["analyses"]),
                              "inspections": len(pending["inspections"])}}
+        if self.policy.activation == "adaptive_sparse":
+            record["recovery"] = (dict(pending["recovery"])
+                                  if pending.get("recovery") else None)
+            if record["recovery"] is not None:
+                record["recovery"]["led_to_inspection"] = any(
+                    i["axis"] == record["recovery"]["axis"]
+                    for i in pending["inspections"])
+            record["effort"]["belief_queries"] += pending["recovery_extra_queries"]
         association = ({axis: self.learner.variable_association(start, axis, ("standard", "express"))
                         for axis in sorted(original_constraints["hidden"])}
                        if self.policy.explore == "learned" else {})
@@ -713,7 +776,7 @@ class InvestigativeRun(CausalRun):
             truth = case["truths"][p]
             knowledge[p] = {"agreement": float((q > .5) == truth),
                             "brier": (q - ((1 - NOISE) if truth else NOISE)) ** 2}
-        return {"seed": self.seed, "mode": self.mode, "family": case["family"], "spec": case["spec"],
+        row = {"seed": self.seed, "mode": self.mode, "family": case["family"], "spec": case["spec"],
                 "index": case["index"], "stage": case["stage"], "group": case.get("group"),
                 "checkpoint": case.get("checkpoint"), "action": procedure, "immediate_action": immediate,
                 "stage_a": pending["stage_a"], "hazard": case["visible"]["hazard"],
@@ -740,12 +803,18 @@ class InvestigativeRun(CausalRun):
                 "signals": signals, "error": (appraisal or {}).get("error"),
                 "missed": (appraisal or {}).get("missed"), "wasted": (appraisal or {}).get("wasted"),
                 "process_updated": (process or {}).get("updated", []),
-                "belief_queries": sum(a["belief_queries"] for a in pending["analyses"]),
+                "belief_queries": sum(a["belief_queries"] for a in pending["analyses"]) +
+                                  pending["recovery_extra_queries"],
                 "selections": len(pending["analyses"]) + (pending["stage_a"] != chosen.label or
                                                           pending["learn"] and self.exploration > 0),
                 "rules_scored": update.get("rules_scored", 0), "scoring_work": update.get("scoring_work", 0),
                 "decision_cpu": pending["decision_cpu"], "learn_cpu": learn_cpu,
                 "outcome_event_id": outcome.event_id}
+        if self.policy.activation == "adaptive_sparse":
+            row.update(reasoning_adequacy=pending["reasoning_adequacy"],
+                       recovery=pending["recovery"],
+                       recovery_extra_queries=pending["recovery_extra_queries"])
+        return row
 
 
 class CurrentRun(CausalRun):
