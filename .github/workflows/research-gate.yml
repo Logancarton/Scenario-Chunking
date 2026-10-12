@@ -2,7 +2,7 @@ name: Scenario Chunking research gate
 
 on:
   push:
-    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "experiment/e12-unified-cognitive-learning", "main"]
+    branches: ["experiment/bounded-causal-spreading", "experiment/independent-meaning", "experiment/category-transfer-e6", "experiment/adaptive-uncertainty-e7", "experiment/cognitive-scaling-e8", "experiment/cognitive-scaling-e8-corrected", "experiment/temporal-prediction-e9", "experiment/predictive-decision-value-e10", "experiment/incremental-refinement-e11", "experiment/persistent-causal-understanding-e12", "experiment/e12-unified-cognitive-learning", "experiment/e12-metacognitive-learning", "main"]
   pull_request:
     branches: ["main", "experiment/cognitive-scaling-e8-corrected", "experiment/predictive-decision-value-e10"]
   workflow_dispatch:
@@ -75,6 +75,39 @@ jobs:
             results-e12
             results-e12-unified
           if-no-files-found: error
+
+  e12-metacognitive-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: E12 investigation, hard constraints, process learning, isolation and restart tests
+        run: python -m pytest -q tests/test_causal_metacognition.py
+      - name: E12 metacognition live smoke (one seed, every condition, safety invariants)
+        run: |
+          python - <<'PYTHON'
+          from scenario_chunking.causal_metacognition import run_benchmark, CURRENT
+          report, results = run_benchmark(seeds=(31,), workers=2, per_family=40, checkpoints=(100, 200))
+          rows = [r for res in results for r in res["rows"]]
+          new = [r for r in rows if r["mode"] != CURRENT]
+          assert new and sum(r["violations"] for r in new) == 0, "a hard constraint was violated"
+          assert sum(r["violations"] for r in rows if r["mode"] == CURRENT) > 0, "reference lost its known limitation"
+          meta = [r for r in rows if r["mode"] == "metacognitive" and r["stage"] == "train"]
+          assert any(u.startswith("relevance:") for r in meta for u in r["process_updated"])
+          assert not any(r["process_updated"] for r in rows if r["stage"] == "heldout")
+          for mode, s in report["summary"].items():
+              print(mode, s["heldout"]["expected_reward"], s["training"]["expected_reward"])
+          PYTHON
+      - name: E12 historical treatments unchanged by the new owners
+        run: python -m pytest -q tests/test_causal_unified.py -k "frozen_byte_for_byte or original_gate"
+      - name: compile and clean diff
+        run: |
+          python -m compileall -q src tests
+          git diff --check
 
   incremental-refinement-e11:
     runs-on: ubuntu-latest

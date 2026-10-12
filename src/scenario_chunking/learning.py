@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+import itertools
 import math
+
+from .cognitive_control import CognitiveControl
 
 
 def _two_zero_counts() -> list[float]:
@@ -158,6 +161,15 @@ class ExplanationBank:
     search_rounds: int = 1
     work: int = 0
 
+    # Partial observability (E12 investigation): a context may contain
+    # ``pair:<axis>:?`` for a variable that exists but was not inspected. A rule
+    # then holds with the probability implied by the scope's observed value
+    # frequencies (``axis_counts``, shared with the learner); ``?`` is never
+    # edit material. Off by default, which is exactly the original learner.
+    partial: bool = False
+    axis_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    _unknown_cache: dict = field(default_factory=dict, repr=False)
+
     def _data(self) -> dict[frozenset[str], list[int]]:
         return self.contexts if self.durable else _aggregate(self.evidence)
 
@@ -165,12 +177,18 @@ class ExplanationBank:
         good, bad = math.log(1 - self.noise), math.log(self.noise)
         total = 0.0
         for literals, (yes, no) in data.items():
-            total += (yes * good + no * bad) if _holds(rule, literals) else (yes * bad + no * good)
+            if self.partial and self.unknown_axes(literals):
+                p = self.noise + (1 - 2 * self.noise) * self.holds_probability(rule, literals)
+                total += yes * math.log(p) + no * math.log(1 - p)
+            else:
+                total += (yes * good + no * bad) if _holds(rule, literals) else (yes * bad + no * good)
         return total
 
     def score(self, rule: Rule) -> float:
         if self.durable:
             fit = self._fit(rule, self.contexts)
+        elif self.partial:
+            fit = self._fit(rule, _aggregate(self.evidence))
         else:
             fit = sum(math.log(1 - self.noise) if _holds(rule, c) == y else math.log(self.noise)
                       for c, y, _ in self.evidence)
@@ -188,8 +206,8 @@ class ExplanationBank:
         return sorted(((r, w / total) for r, w in weights), key=lambda x: (-x[1], describe_rule(x[0])))
 
     def trace(self, rule: Rule, weight: float) -> dict:
-        support = [eid for c, y, eid in self.evidence if _holds(rule, c) == y]
-        contra = [eid for c, y, eid in self.evidence if _holds(rule, c) != y]
+        support = [eid for c, y, eid in self.evidence if self.holds(rule, c) == y]
+        contra = [eid for c, y, eid in self.evidence if self.holds(rule, c) != y]
         trace = {"id": describe_rule(rule), "rule": sorted(sorted(t) for t in rule),
                  "weight": weight, "confidence": weight,
                  "support_count": len(support), "contradiction_count": len(contra),
@@ -197,10 +215,171 @@ class ExplanationBank:
                  **{k: self.beam[rule][k] for k in ("operator", "origin", "revision")}}
         if self.durable:
             # Durable totals: still-valid evidence outside the window still counts.
-            yes = sum(a if _holds(rule, c) else b for c, (a, b) in self.contexts.items())
-            no = sum(b if _holds(rule, c) else a for c, (a, b) in self.contexts.items())
+            yes = sum(a if self.holds(rule, c) else b for c, (a, b) in self.contexts.items())
+            no = sum(b if self.holds(rule, c) else a for c, (a, b) in self.contexts.items())
             trace["durable_support_count"], trace["durable_contradiction_count"] = yes, no
         return trace
+
+    # -- partial observability -------------------------------------------------------
+    def unknown_axes(self, literals: frozenset[str]) -> frozenset[str]:
+        cached = self._unknown_cache.get(literals)
+        if cached is None:
+            cached = frozenset(_axis(l) for l in literals if l.endswith(":?"))
+            if len(self._unknown_cache) < 4096:
+                self._unknown_cache[literals] = cached
+        return cached
+
+    def value_options(self, axis: str) -> list[tuple[str | None, float]]:
+        """Observed values of a hidden variable with Laplace-smoothed frequencies.
+
+        Domains are binary; mass for a value never yet observed is ``None``.
+        """
+        counts = self.axis_counts.get(axis, {})
+        total = sum(counts.values())
+        options = [(l, (n + 1) / (total + 2)) for l, n in sorted(counts.items())]
+        rest = 1.0 - sum(p for _, p in options)
+        return options + ([(None, rest)] if rest > 1e-12 else [])
+
+    def holds_probability(self, rule: Rule, literals: frozenset[str]) -> float:
+        """P(rule holds | known literals), marginalizing uninspected variables."""
+        unknown = self.unknown_axes(literals) if self.partial else frozenset()
+        if not unknown:
+            return float(_holds(rule, literals))
+        live = []
+        for term in rule:
+            need = []
+            for l in term:
+                if l in literals:
+                    continue
+                if _axis(l) not in unknown:
+                    break
+                need.append(l)
+            else:
+                if not need:
+                    return 1.0
+                live.append(need)
+        if not live:
+            return 0.0
+        axes = sorted({_axis(l) for need in live for l in need})
+        total = 0.0
+        for combo in itertools.product(*(self.value_options(a) for a in axes)):
+            chosen = {l for l, _ in combo if l is not None}
+            if any(all(l in chosen for l in need) for need in live):
+                weight = 1.0
+                for _, p in combo:
+                    weight *= p
+                total += weight
+        return total
+
+    def holds(self, rule: Rule, literals: frozenset[str]) -> bool:
+        return self.holds_probability(rule, literals) > .5 if self.partial else _holds(rule, literals)
+
+    def association(self, axis: str) -> tuple[float, int]:
+        """Model-free evidence that success depends on a (possibly hidden) variable.
+
+        Log Bayes factor, over observations where the variable was revealed, of
+        "success rate differs by value" versus "one success rate", with uniform
+        Beta priors. Needs no explanation rule to exist and penalizes small
+        samples (Occam). Misses dependence that appears only in interaction
+        with other variables (e.g. parity). Returns (log Bayes factor, revealed n).
+        """
+        counts: dict[str, list[int]] = {}
+        prefix = f"pair:{axis}:"
+        for literals, (yes, no) in self._data().items():
+            for l in literals:
+                if l.startswith(prefix) and not l.endswith(":?"):
+                    c = counts.setdefault(l, [0, 0])
+                    c[0] += yes
+                    c[1] += no
+        def log_marginal(y, m):
+            return math.lgamma(y + 1) + math.lgamma(m + 1) - math.lgamma(y + m + 2)
+        total = [sum(c[0] for c in counts.values()), sum(c[1] for c in counts.values())]
+        evidence = sum(log_marginal(*c) for c in counts.values()) - log_marginal(*total)
+        return round(evidence if len(counts) > 1 else 0.0, 9), sum(total)
+
+    def familiarity(self, literals: frozenset[str]) -> int:
+        """Observations of exactly this context (durable or retained window)."""
+        if self.durable:
+            return sum(self.contexts.get(literals, (0, 0)))
+        return sum(1 for c, _, _ in self.evidence if c == literals)
+
+    # -- explanation adequacy (read-only self-diagnosis) -----------------------------
+    def adequacy(self, *, project_out: frozenset[str] = frozenset(), min_evidence: int = 24,
+                 rule_checks: bool = True) -> dict:
+        """Is the current explanation adequate, and if not, what do the data allow us to say?
+
+        Uses only retained observations. ``unexplained_variability`` means the
+        same observed context yields both outcomes more often than the noise
+        model allows: a missing variable OR more noise than assumed; these data
+        cannot tell which. ``representation_or_search_limit`` means contexts are
+        internally consistent yet the best rule in the beam misfits them: the
+        language or the bounded search cannot express the relationship.
+        ``competing_explanations`` means beam members still predict the observed
+        contexts differently. ``limited_coverage`` means the explanation fits
+        what was experienced but most combinations of the observed variable
+        values were never seen, so predictions there are unsupported (not shown
+        to be wrong). ``project_out`` drops variables (e.g. hidden ones) first.
+        """
+        data = self._data()
+        projected: dict[frozenset[str], list[int]] = {}
+        for literals, (yes, no) in data.items():
+            key = frozenset(l for l in literals if _axis(l) not in project_out)
+            counts = projected.setdefault(key, [0, 0])
+            counts[0] += yes
+            counts[1] += no
+        total = sum(a + b for a, b in data.values())
+        repeated = [(a, b) for a, b in projected.values() if a + b >= 2]
+        n_rep = sum(a + b for a, b in repeated)
+        minority = sum(min(a, b) for a, b in repeated)
+        expected = n_rep * self.noise
+        spread = math.sqrt(max(1e-9, n_rep * self.noise * (1 - self.noise)))
+        excess = (minority - expected) / n_rep if n_rep else 0.0
+        z = (minority - expected) / spread if n_rep else 0.0
+        if not rule_checks:
+            return {"status": None, "signals": {"observations": total, "repeated_observations": n_rep,
+                                                "excess_minority_rate": round(excess, 6),
+                                                "variability_z": round(z, 3)}}
+        posterior = self.posterior()
+        best, weight = posterior[0]
+        # Competing explanations matter only where they predict differently.
+        disagreement = (sum((a + b) * 4 * q * (1 - q) for c, (a, b) in data.items()
+                            for q in [sum(w * self.holds_probability(r, c) for r, w in posterior)])
+                        / total) if total else 1.0
+        errors = sum((b if self.holds(best, c) else a) for c, (a, b) in data.items())
+        floor = sum(min(a, b) for a, b in data.values())
+        misfit = (errors - floor) / total if total else 0.0
+        # Diversity: how much of the space spanned by the observed variable values
+        # has actually been experienced (predictions elsewhere are unsupported).
+        known = {frozenset(l for l in c if not l.endswith(":?")) for c in data}
+        values: dict[str, set[str]] = {}
+        for c in known:
+            for l in c:
+                values.setdefault(_axis(l), set()).add(l)
+        space = math.prod(len(v) for v in values.values()) if values else 1
+        coverage = len(known) / space
+        signals = {"observations": total, "repeated_observations": n_rep,
+                   "excess_minority_rate": round(excess, 6), "variability_z": round(z, 3),
+                   "excess_rule_error_rate": round(misfit, 6), "rule_errors_beyond_floor": errors - floor,
+                   "map_weight": round(weight, 6), "predictive_disagreement": round(disagreement, 6),
+                   "context_coverage": round(coverage, 6),
+                   "explanation": describe_rule(best),
+                   "recent_regime_change": bool(self.change_detection and self.regime_changes
+                                                and self.since_change < self.change_window)}
+        if signals["recent_regime_change"]:
+            status = "recent_change"
+        elif total < min_evidence:
+            status = "insufficient_evidence"
+        elif z > 3 and excess > .05:
+            status = "unexplained_variability"
+        elif misfit > .05 and errors - floor >= 6:
+            status = "representation_or_search_limit"
+        elif disagreement > .2:
+            status = "competing_explanations"
+        elif coverage < .5:
+            status = "limited_coverage"
+        else:
+            status = "adequate"
+        return {"status": status, "signals": signals}
 
     # -- bounded durable knowledge -------------------------------------------------
     def remember(self, literals: frozenset[str], success: bool, evidence_id: str) -> None:
@@ -248,8 +427,9 @@ class ExplanationBank:
     def _refit(self, rows) -> tuple[list[Rule], int]:
         """Bounded greedy rule search on recent evidence only (2 edit rounds)."""
         data = _aggregate(rows)
-        terms = {frozenset([l]) for literals, *_ in rows for l in literals} | {
-            frozenset([a, b]) for literals, *_ in rows for a in literals for b in literals
+        known = [frozenset(l for l in literals if not l.endswith(":?")) for literals, *_ in rows]
+        terms = {frozenset([l]) for literals in known for l in literals} | {
+            frozenset([a, b]) for literals in known for a in literals for b in literals
             if a < b and _axis(a) != _axis(b)}
         found, scored = {frozenset()}, 0
         def ranked():
@@ -394,6 +574,11 @@ class OutcomeLearner:
         # E12 treatment switches for newly created explanation banks; empty is
         # the original E12 learner. Set once, before any experience.
         self.explanation_options: dict[str, object] = {}
+        # E12 investigation: observed frequencies of inspectable variables per
+        # scope (world knowledge, shared with partial-observability banks) and
+        # the process model (how to investigate and how far to trust oneself).
+        self.variable_counts: dict[tuple, dict[str, dict[str, int]]] = {}
+        self.control = CognitiveControl()
         # Learned accessibility remains distinct from evidence truth and validity.
         self.activation_persistence: dict[str, float] = defaultdict(float)
         self.activation_updates: list[dict[str, object]] = []
@@ -512,7 +697,10 @@ class OutcomeLearner:
                     "hypotheses": [], "explanation": None, "scope": list(key[0]),
                     "hypotheses_examined": 0}
         posterior = bank.posterior()
-        q = round(sum(w for rule, w in posterior if _holds(rule, literals)), 9)
+        if bank.partial:
+            q = round(sum(w * bank.holds_probability(rule, literals) for rule, w in posterior), 9)
+        else:
+            q = round(sum(w for rule, w in posterior if _holds(rule, literals)), 9)
         p = (1 - bank.noise) * q + bank.noise * (1 - q)
         best = [bank.trace(rule, w) for rule, w in posterior[:3]]
         result = {"probability": p,
@@ -520,7 +708,7 @@ class OutcomeLearner:
                   "uncertainty": 4 * q * (1 - q),
                   "evidence_ids": sorted({eid for h in best[:1] for eid in (*h["support"], *h["contradictions"])}),
                   "hypotheses": best, "explanation": best[0]["id"],
-                  "explains_context": _holds(posterior[0][0], literals),
+                  "explains_context": bank.holds(posterior[0][0], literals),
                   "scope": list(key[0]), "hypotheses_examined": len(posterior)}
         if bank.change_detection:
             result["regime"] = len(bank.regime_changes)
@@ -536,7 +724,7 @@ class OutcomeLearner:
         bank = self.explanations.get((self.causal_scope(cues), procedure))
         literals = self.explanation_literals(cues)
         return [] if bank is None else [
-            {"explanation": entry["explanation"], "holds": _holds(entry["rule"], literals),
+            {"explanation": entry["explanation"], "holds": bank.holds(entry["rule"], literals),
              "ended_revision": entry["ended_revision"], "observations": entry["observations"]}
             for entry in bank.archive]
 
@@ -555,7 +743,11 @@ class OutcomeLearner:
             raise ValueError("explanation evidence needs a boolean outcome and an evidence id")
         key = (self.causal_scope(cues), procedure)
         prior = self.explanation_prediction(cues, procedure)
-        bank = self.explanations.setdefault(key, ExplanationBank(**self.explanation_options))
+        bank = self.explanations.get(key)
+        if bank is None:
+            bank = self.explanations[key] = ExplanationBank(**self.explanation_options)
+            if bank.partial:
+                bank.axis_counts = self.variable_counts.setdefault(key[0], {})
         if not self.enabled or bank.known(evidence_id):
             return {"updated": [], "proposed": [], "prediction_error": float(success) - prior["probability"]}
         literals = self.explanation_literals(cues)
@@ -574,7 +766,8 @@ class OutcomeLearner:
             del bank.prequential[:-bank.change_window]
         if not persist:
             bank.beam = {frozenset(): {"operator": "prior", "origin": None, "revision": bank.revisions}}
-        pool = bank.recruited(literals)
+        pool = bank.recruited(frozenset(l for l in literals if not l.endswith(":?"))
+                              if bank.partial else literals)
         terms = {frozenset([l]) for l in pool} | {
             frozenset([a, b]) for a in pool for b in pool if a < b and _axis(a) != _axis(b)}
         seeded = set()
@@ -637,7 +830,7 @@ class OutcomeLearner:
             if round_index == 0 and targets:
                 count = len(candidates)
                 for context, outcome in targets:
-                    suspects = [r for r in edited if _holds(r, context) != outcome][:4]
+                    suspects = [r for r in edited if bank.holds(r, context) != outcome][:4]
                     for rule in suspects:
                         if not outcome:  # predicted success: exclude this context
                             for term in rule:
@@ -689,11 +882,11 @@ class OutcomeLearner:
         best_now = after[0][0]
         if review is not None:
             review_status[review["review_id"]] = (
-                "resolved" if _holds(best_now, literals) == success else "open")
+                "resolved" if bank.holds(best_now, literals) == success else "open")
         for item in reviews:
             if isinstance(item, dict) and item.get("review_id") not in rejected:
                 review_status[item["review_id"]] = (
-                    "resolved" if _holds(best_now, frozenset(item["literals"])) == item["success"]
+                    "resolved" if bank.holds(best_now, frozenset(item["literals"])) == item["success"]
                     else "open")
         data_rows = len(bank.contexts) if bank.durable else len(bank.evidence)
         return {"updated": [describe_rule(r) for r, _ in after[:3]],
@@ -711,6 +904,113 @@ class OutcomeLearner:
                 "recruited": sorted(pool), "regime": regime,
                 "evidence_id": evidence_id, "scope": list(key[0]),
                 "hypotheses": [bank.trace(r, w) for r, w in after[:3]]}
+
+    # -- E12 investigation: knowledge reads and process learning -------------------
+    def observe_variable(self, cues: frozenset[str], literal: str) -> None:
+        """Knowledge: an inspection revealed one value of a hidden variable."""
+        if not self.enabled:
+            return
+        if not literal.startswith("pair:") or literal.endswith(":?"):
+            raise ValueError("an inspection reveals one concrete public literal")
+        counts = self.variable_counts.setdefault(self.causal_scope(cues), {})
+        values = counts.setdefault(_axis(literal), {})
+        values[literal] = values.get(literal, 0) + 1
+
+    def variable_distribution(self, cues: frozenset[str], axis: str,
+                              domain: tuple[str, ...]) -> dict[str, float]:
+        """Read-only Laplace-smoothed P(value) of a hidden variable in this scope."""
+        counts = self.variable_counts.get(self.causal_scope(cues), {}).get(axis, {})
+        total = sum(counts.get(f"pair:{axis}:{v}", 0) for v in domain)
+        return {v: (counts.get(f"pair:{axis}:{v}", 0) + 1) / (total + len(domain)) for v in domain}
+
+    def competence(self, cues: frozenset[str], axis: str) -> float:
+        """How informed knowledge is about a variable: revealed observations, saturating."""
+        n = sum(self.variable_counts.get(self.causal_scope(cues), {}).get(axis, {}).values())
+        return n / (n + self.control.competence_scale)
+
+    def explanation_beliefs(self, queries: list[frozenset[str]], procedure: str) -> list[dict]:
+        """Read-only: one posterior, many (possibly hypothetical) contexts of one scope."""
+        if not queries:
+            return []
+        scopes = {self.causal_scope(q) for q in queries}
+        if len(scopes) != 1:
+            raise ValueError("belief queries must share one scope")
+        bank = self.explanations.get((scopes.pop(), procedure))
+        if bank is None or not (bank.evidence or bank.contexts):
+            return [{"probability": .5, "uncertainty": 1.0, "familiarity": 0, "evidence_ids": [],
+                     "hypotheses": [], "explanation": None, "hypotheses_examined": 0}
+                    for _ in queries]
+        posterior = bank.posterior()
+        out = []
+        for cues in queries:
+            literals = self.explanation_literals(cues)
+            q = round(sum(w * bank.holds_probability(r, literals) for r, w in posterior), 9)
+            out.append({"probability": (1 - bank.noise) * q + bank.noise * (1 - q),
+                        "uncertainty": 4 * q * (1 - q), "familiarity": bank.familiarity(literals)})
+        # Provenance for the actual (first) context, as explanation_prediction gives.
+        best = [bank.trace(rule, w) for rule, w in posterior[:3]]
+        out[0].update(hypotheses=best, explanation=best[0]["id"], hypotheses_examined=len(posterior),
+                      evidence_ids=sorted({eid for h in best[:1]
+                                           for eid in (*h["support"], *h["contradictions"])}))
+        return out
+
+    def variable_association(self, cues: frozenset[str], axis: str, procedures) -> dict:
+        """Read-only: summed evidence over the scope's banks that outcomes depend on axis."""
+        scope = self.causal_scope(cues)
+        evidence, revealed = 0.0, 0
+        for procedure in procedures:
+            bank = self.explanations.get((scope, procedure))
+            if bank is not None:
+                e, n = bank.association(axis)
+                evidence, revealed = evidence + e, revealed + n
+        return {"log_bayes_factor": round(evidence, 9), "revealed": revealed}
+
+    def unexplained_variability(self, cues: frozenset[str], procedures, *,
+                                project_out: frozenset[str]) -> float:
+        """Self-diagnosis in [0, 1]: outcome variability the always-visible variables
+        leave unexplained, as a share of the maximum possible beyond noise."""
+        share = 0.0
+        scope = self.causal_scope(cues)
+        for procedure in procedures:
+            bank = self.explanations.get((scope, procedure))
+            if bank is None:
+                continue
+            check = bank.adequacy(project_out=project_out, min_evidence=0, rule_checks=False)["signals"]
+            if check["variability_z"] > 2:
+                share = max(share, check["excess_minority_rate"] / (.5 - bank.noise))
+        return round(min(1.0, max(0.0, share)), 9)
+
+    def process_feedback(self, appraisal: dict, *, relevance: bool = True, trust: bool = True,
+                         diagnosis: bool = True) -> dict:
+        """Process learning from the thought owner's appraisal of one experience.
+
+        The appraisal says what was examined, what the outcome was, and which
+        examinations hindsight (current knowledge) judges warranted. Only this
+        owner turns it into slow, bounded changes of the process model; nothing
+        here touches explanations, memory or authorization.
+        """
+        if not self.enabled:
+            return {"updated": []}
+        control, scope, changed = self.control, tuple(appraisal["scope"]), []
+        route = appraisal.get("route")
+        if trust and route is not None:
+            control.record_outcome(scope, route["procedure"], route["familiarity"],
+                                   route["prediction"], route["success"])
+            changed.append("trust")
+        if diagnosis:
+            control.drive[scope] = appraisal["unexplained"]
+            changed.append("drive")
+        if relevance:
+            # Outcome-grounded and model-free: does success depend on the variable,
+            # among the experiences where it was examined?
+            for axis, item in sorted(appraisal.get("association", {}).items()):
+                if item["revealed"] > 0:
+                    control.record_relevance(scope, axis, item["log_bayes_factor"])
+                    changed.append("relevance:" + axis)
+        if changed:
+            control.audit({"evidence_id": appraisal.get("evidence_id"), "scope": list(scope),
+                           "changed": changed, "error": appraisal.get("error")})
+        return {"updated": changed}
 
     def incremental_prediction(self, cues: frozenset[str], procedure: str) -> dict:
         """Conditional success belief from observed attempts, not episodic lookup.

@@ -29,6 +29,12 @@ class ActionSelector:
                transfer_context: dict | None = None) -> SelectionDecision:
         if not actions:
             raise RuntimeError("no candidate actions")
+        # Hard constraints bind BEFORE any value is compared: an impermissible
+        # action cannot win through reward, exploration or refinement.
+        if hasattr(state, "permissible"):
+            actions = [a for a in actions if state.permissible(a)]
+            if not actions:
+                raise PermissionError("no permissible action; the caller must offer a safe one")
         explore = (transfer_context or {}).get("exploration")
         bonuses = {}
         if explore and transfer_context.get("cognitive_mode") == "incremental":
@@ -152,10 +158,17 @@ class ActionSelector:
             predicted_success = float(thought_trace["prediction"])
         if transfer_context and transfer_context.get("cognitive_mode") == "incremental":
             predicted_success = transfer_context["predictions"][action.label]["probability"]
+        if hasattr(state, "permissible") and not state.permissible(action):
+            raise PermissionError("selected an impermissible action")  # defense in depth
         if explore and bonuses:
-            key = (explore["scope"], action.label)
-            self.exploration_counts[key] = self.exploration_counts.get(key, 0) + 1
-            reasons = reasons + [f"exploration_bonus={bonuses[action.label]:.3f}"]
+            counted = explore.get("_counted")
+            if counted is None or action.label in counted:
+                key = (explore["scope"], action.label)
+                self.exploration_counts[key] = self.exploration_counts.get(key, 0) + 1
+            if explore.get("inspect_ucb") is not None:
+                key = (explore["scope"], "*investigation")
+                self.exploration_counts[key] = self.exploration_counts.get(key, 0) + 1
+            reasons = reasons + [f"exploration_bonus={bonuses.get(action.label, 0.0):.3f}"]
         return SelectionDecision(
             action=action,
             score=score,
@@ -175,10 +188,30 @@ class ActionSelector:
         rule. Only the choice is optimistic; predictions stay unbiased.
         """
         scope, kappa = explore["scope"], float(explore["bonus"])
-        counts = {a.label: self.exploration_counts.get((scope, a.label), 0) for a in actions}
+        # E12 investigation (optional keys): count-based route exploration may be
+        # limited to some labels; inspections get their own count-based bonus or
+        # an explicit per-label bonus supplied by the condition's policy.
+        eligible = ([a for a in actions if a.label in explore["labels"]]
+                    if "labels" in explore else actions)
+        counts = {a.label: self.exploration_counts.get((scope, a.label), 0) for a in eligible}
         total = sum(counts.values())
         bonuses = {label: kappa * math.sqrt(math.log(1 + total) / (1 + n)) if total
                    else kappa for label, n in counts.items()}
+        counted = set(counts)
+        if explore.get("inspect_ucb") is not None:
+            k_i = float(explore["inspect_ucb"])
+            decisions = self.exploration_counts.get((scope, "*investigation"), 0)
+            for a in actions:
+                if a.kind == "inspect":
+                    n = self.exploration_counts.get((scope, a.label), 0)
+                    bonuses[a.label] = (k_i * math.sqrt(math.log(1 + decisions) / (1 + n))
+                                        if decisions else k_i)
+                    counted.add(a.label)
+        for label, extra in explore.get("extra", {}).items():
+            if label in {a.label for a in actions}:
+                bonuses[label] = bonuses.get(label, 0.0) + float(extra)
+        if "labels" in explore or "inspect_ucb" in explore or "extra" in explore:
+            explore["_counted"] = counted
         values = {k: v + bonuses.get(k, 0.0) for k, v in context["candidate_values"].items()}
         return {**context, "candidate_values": values,
                 "greedy_values": context["candidate_values"]}, bonuses

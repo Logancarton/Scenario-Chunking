@@ -802,3 +802,129 @@ class IncrementalDispatchWorld:
         """Offline evaluator only; never delivered to the cognitive pipeline."""
         return (1.0 if self._outcomes[procedure] else -1.0) - {
             "standard": .02, "express": .18}[procedure]
+
+
+class InvestigationWorld:
+    """E12 investigation world: consequential variables may be hidden until inspected.
+
+    Public (cognition may read): the visible factors, WHICH variables exist but
+    are hidden, each one's possible values and inspection cost, every action's
+    consequences (success gain, failure loss, cost), the safe deferral value
+    and the authorization restrictions. Private: hidden values, the noiseless
+    rule and the noisy potential outcomes. Outcomes report success or failure
+    only; a hidden value is learned solely by inspecting it.
+
+    Each instance permits one final action. Potential outcomes are common random
+    numbers per (seed, family, index, procedure), so different decisions never
+    shift another case's random draw.
+    """
+    ROUTES = ("standard", "express")
+
+    def __init__(self, *, family: str, visible: dict[str, str], hidden: dict[str, str],
+                 domains: dict[str, tuple[str, str]], truths: dict[str, bool],
+                 outcomes: dict[str, bool], noise: float, inspect_costs: dict[str, float],
+                 stakes: dict[str, dict[str, float]], prohibited: frozenset[str],
+                 defer_value: float, epoch: int = 0) -> None:
+        if set(truths) != set(self.ROUTES) or set(outcomes) != set(self.ROUTES):
+            raise ValueError("investigation worlds define both routes")
+        if set(hidden) != set(inspect_costs) or set(hidden) != set(domains):
+            raise ValueError("every hidden variable needs a public domain and inspection cost")
+        if any(hidden[a] not in domains[a] for a in hidden) or set(hidden) & set(visible):
+            raise ValueError("hidden values must lie in their public domain")
+        if set(stakes) != set(self.ROUTES) or not prohibited <= {"standard", "express"}:
+            raise ValueError("stakes cover both routes; only routes can be prohibited")
+        self.family, self.epoch = family, epoch
+        self.visible, self._hidden = dict(visible), dict(hidden)
+        self.domains = {a: tuple(v) for a, v in domains.items()}
+        self._truth, self._outcomes, self.noise = dict(truths), dict(outcomes), noise
+        self.inspect_costs = dict(inspect_costs)
+        self.stakes = {p: dict(s) for p, s in stakes.items()}
+        self.prohibited, self.defer_value = frozenset(prohibited), float(defer_value)
+        self.revealed: dict[str, str] = {}
+        self.inspection_cost = 0.0
+        self.executed = False
+        self.violations = 0  # evaluation: executed prohibited routes (must stay 0)
+
+    @classmethod
+    def scripted(cls, *, seed: int, family: str, index: int, visible: dict[str, str],
+                 hidden: dict[str, str], domains: dict[str, tuple[str, str]],
+                 truths: dict[str, bool], noise: float = .08,
+                 inspect_costs: dict[str, float], stakes: dict[str, dict[str, float]],
+                 prohibited=frozenset(), defer_value: float = -.3, epoch: int = 0):
+        if not 0.0 <= noise < .5:
+            raise ValueError("noise must lie in [0, .5)")
+        outcomes = IncrementalDispatchWorld._noisy(truths, f"investigation|{seed}|{family}|{index}", noise)
+        return cls(family=family, visible=visible, hidden=hidden, domains=domains, truths=truths,
+                   outcomes=outcomes, noise=noise, inspect_costs=inspect_costs, stakes=stakes,
+                   prohibited=frozenset(prohibited), defer_value=defer_value, epoch=epoch)
+
+    # -- public interface --------------------------------------------------------
+    def public_cues(self) -> frozenset[str]:
+        hidden = {f"pair:{a}:{self.revealed.get(a, '?')}" for a in self._hidden}
+        return frozenset({f"pair:domain:{self.family}", f"pair:epoch:{self.epoch}"} |
+                         {f"pair:{a}:{v}" for a, v in self.visible.items()} | hidden)
+
+    def public_constraints(self) -> dict:
+        return {"hidden": {a: self.inspect_costs[a] for a in self._hidden if a not in self.revealed},
+                "domains": dict(self.domains), "stakes": {p: dict(s) for p, s in self.stakes.items()},
+                "prohibited": self.prohibited, "defer_value": self.defer_value}
+
+    def inspect(self, axis: str) -> EnvironmentSignal:
+        if self.executed:
+            raise RuntimeError("inspection happens before the final action")
+        if axis not in self._hidden or axis in self.revealed:
+            raise ValueError("only an unrevealed hidden variable can be inspected")
+        value = self._hidden[axis]
+        self.revealed[axis] = value
+        cost = self.inspect_costs[axis]
+        self.inspection_cost += cost
+        return EnvironmentSignal(
+            kind=EventKind.OBSERVATION, truth_status=TruthStatus.FACT,
+            content=f"Inspected {axis}: {value}",
+            semantic_tags=frozenset({f"pair:{axis}:{value}", "action:inspect"}),
+            reward=-cost, informative=True,
+            metadata={"inspected": axis, "value": value, "cost": cost})
+
+    def execute(self, action: Action) -> EnvironmentSignal:
+        if self.executed:
+            raise RuntimeError("one investigation case permits one final action")
+        if action.kind != "route" or action.target not in ("standard", "express", "defer"):
+            raise ValueError("unsupported final action")
+        self.executed = True
+        cues = sorted(self.public_cues())
+        if action.target == "defer":
+            return EnvironmentSignal(
+                kind=EventKind.OUTCOME, truth_status=TruthStatus.OUTCOME,
+                content="Request deferred safely", outcome="deferred",
+                semantic_tags=frozenset(cues) | {"procedure:defer"}, reward=self.defer_value,
+                metadata={"procedure": "defer", "context_cues": cues})
+        if action.target in self.prohibited:
+            self.violations += 1
+        succeeded = self._outcomes[action.target]
+        stake = self.stakes[action.target]
+        return EnvironmentSignal(
+            kind=EventKind.OUTCOME, truth_status=TruthStatus.OUTCOME,
+            content="Observed dispatch " + ("success" if succeeded else "failure"),
+            semantic_tags=frozenset(cues) | {"action:route", "procedure:" + action.target},
+            outcome="success" if succeeded else "failure",
+            reward=(stake["gain"] if succeeded else -stake["loss"]) - stake["cost"],
+            confidence=1.0, informative=True,
+            metadata={"procedure": action.target, "context_cues": cues})
+
+    # -- evaluation only: never delivered to cognition -----------------------------
+    def counterfactual_truth(self, procedure: str) -> bool:
+        return self._truth[procedure]
+
+    def expected_utility(self, procedure: str) -> float:
+        """Noiseless expected reward of a final action in the full private context."""
+        if procedure == "defer":
+            return self.defer_value
+        p = 1 - self.noise if self._truth[procedure] else self.noise
+        s = self.stakes[procedure]
+        return p * s["gain"] - (1 - p) * s["loss"] - s["cost"]
+
+    def permissible_routes(self) -> tuple[str, ...]:
+        return tuple(p for p in ("standard", "express", "defer") if p not in self.prohibited)
+
+    def hidden_truth(self) -> dict[str, str]:
+        return dict(self._hidden)

@@ -58,6 +58,10 @@ class ThoughtThread:
     open_reviews: list[dict[str, object]] = field(default_factory=list)
     review_history: list[dict[str, object]] = field(default_factory=list)
     last_outcome: dict[str, object] | None = None
+    # E12 investigation: appraisals of HOW past decisions were reached, and the
+    # advantages the scarce option offered (for pricing its future use).
+    process_appraisals: list[dict[str, object]] = field(default_factory=list)
+    option_advantages: list[float] = field(default_factory=list)
 
     def activation_at(self, now: float, decay_rate: float = 0.08) -> float:
         return self.activation_strength * math.exp(-decay_rate * max(0.0, now - self.activation_last_time))
@@ -610,6 +614,71 @@ class ProgressiveRefiner:
                 "explanation": update.get("explanation"), "revised": update.get("revised", False),
                 "open_reviews": [r["review_id"] for r in thread.open_reviews]}
 
+    def appraise_process(self, state: CognitiveState, *, record: dict, hindsight: dict,
+                         unexplained: float, now: float, information_gain: dict | None = None,
+                         association: dict | None = None) -> dict:
+        """Appraise the cognitive process behind one decision, after its outcome.
+
+        Not "was the prediction right?" but "how was the decision reached?":
+        which variables were examined and how much each improved the prediction
+        of what actually happened (prequential information gain), how strongly
+        the outcomes examined so far depend on each variable (model-free
+        association evidence supplied by the knowledge owner), which
+        examinations current knowledge judges warranted in hindsight (value of
+        information above cost, in the visible context the decision started
+        from), whether an error is attributable to information that was
+        available but not examined, whether the action followed from the values
+        and respected the constraints, and what the reasoning cost. The thought
+        owner records the appraisal; only the learner turns it into process
+        learning.
+        """
+        verdicts = {}
+        for axis, h in sorted(hindsight.items()):
+            verdicts[axis] = {"information_value": h["voi"], "cost": h["cost"],
+                              "warranted": h["voi"] > h["cost"], "competence": h["competence"],
+                              "examined": axis in record["inspected"]}
+        missed = [a for a, v in verdicts.items() if v["warranted"] and not v["examined"]]
+        wasted = [a for a, v in verdicts.items() if v["examined"] and not v["warranted"]
+                  and not record["inspected"][a]["changed_decision"]]
+        route = record.get("route")
+        error = None
+        if route is not None and abs(float(route["success"]) - route["prediction"]) > .5:
+            error = "missing_information" if missed else "knowledge_or_noise"
+        appraisal = {"evidence_id": record.get("evidence_id"), "scope": list(record["scope"]),
+                     "time": now, "hindsight": verdicts, "missed": missed, "wasted": wasted,
+                     "information_gain": dict(information_gain or {}),
+                     "association": dict(association or {}),
+                     "error": error, "route": route, "unexplained": unexplained,
+                     "decision_followed_values": record["followed_values"],
+                     "constraints_respected": record["permissible"],
+                     "effort": dict(record["effort"])}
+        thread = self.thread(state)
+        thread.process_appraisals.append(appraisal)
+        del thread.process_appraisals[:-self.max_versions]
+        return appraisal
+
+    def option_costs(self, state: CognitiveState, *, values: dict[str, float], scarce: str,
+                     alternatives: list[str], horizon: int, minimum: int = 8) -> dict[str, float]:
+        """Price the future use a scarce option would forfeit (multi-step consequence).
+
+        Using ``scarce`` now makes it unavailable for the next ``horizon``
+        decisions of this investigation. Its opportunity cost is the expected
+        best advantage it would offer over that horizon, estimated from the
+        advantages this continuing thought has actually seen. The refiner only
+        prices; the selector still decides.
+        """
+        thread = self.thread(state)
+        advantage = values[scarce] - max(values[a] for a in alternatives)
+        history = sorted(max(0.0, a) for a in thread.option_advantages)
+        cost = 0.0
+        if horizon > 0 and len(history) >= minimum:
+            n = len(history)
+            cost = sum(x * (((i + 1) / n) ** horizon - (i / n) ** horizon)
+                       for i, x in enumerate(history))
+        thread.option_advantages.append(round(advantage, 9))
+        del thread.option_advantages[:-64]
+        return {scarce: round(cost, 9)} if cost > 0 else {}
+
     def diagnose_causal(self, state: CognitiveState, outcome, retrieved_events, *,
                         probability: float) -> dict:
         """Bounded same-action/scope contrast selection on observed surprise.
@@ -664,10 +733,13 @@ class ProgressiveRefiner:
         values = context["candidate_values"]
         predictions = context["predictions"]
         risk_price = max(0.0, float(context.get("risk_price", 0.0)))
+        # Explicitly priced future options (E12 multi-step): using an action now
+        # may forfeit it later. Absent, this is exactly the historical ranking.
+        option_costs = context.get("option_costs") or {}
         assessed = {
             a.label: values[a.label] - risk_price *
             predictions[a.label]["uncertainty"] *
-            (1.0 - predictions[a.label]["probability"])
+            (1.0 - predictions[a.label]["probability"]) - option_costs.get(a.label, 0.0)
             for _, a, _, _ in scored
         }
         best = min(scored, key=lambda row: (-assessed[row[1].label], row[1].label))
