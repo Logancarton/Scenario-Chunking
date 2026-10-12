@@ -887,6 +887,111 @@ Mechanism-level results on the challenges:
 
 Research runner only; the Sonara production repositories were read, not modified.
 
+### Prediction-to-decision diagnostic — why better prediction did not reliably raise reward (2026-10-11)
+
+Branch `experiment/e12-prediction-decision-diagnostic`, from `main` at `483be0c`. This is an evaluation harness inside Experiment 12, not a new experiment. No learning, valuation, selection or refinement code changed. Draft PR #8 was not touched.
+
+**Question.** Unified E12 reported online all-action Brier 0.2093 vs 0.2379 for episodic memory, but held-out reward +0.0838 vs +0.0992 (paired −0.016 [−0.059, +0.031], 10 seeds). Is this a prediction-to-decision bottleneck, and if so, where?
+
+**Signal-flow and decision-equation audit (from the code, before measuring).**
+* `CausalRun.act` → `CognitiveState` → `MemoryRouter.retrieve` → `MeaningInterpreter.incremental_action_values` (explanation/one-pass) or `incremental_episodic_values` (episodic) → `ActionSelector.select` → `ProgressiveRefiner.refine_incremental` (explanation only) → world → `deliver` → `OutcomeLearner`.
+* Valuation (`meaning.py`): V(a) = p − (1 − p) − cost(a), with costs 0.02/0.18. This is exactly the world's expected reward (±1 − cost). Express wins iff p_E − p_S > 0.08; for the explanation learner (p = 0.9q + 0.1(1 − q)) the posterior mass must differ by 0.10. Ties go to express (label order).
+* Selector, both paths: the incremental context replaces the heuristic score with the value argmax (`one_pass_conditional_value` / `incremental_value_refinement`). The refiner computes V − risk_price·u·(1 − p) with `risk_price = 0`, so it chooses exactly the direct EV argmax. Its `meaningfully_changed_action` flag compares against the noisy clipped heuristic order, not the value ranking (it fired in about 5% of decisions without ever changing the EV choice).
+* Inactive under E12: predictive uncertainty (multiplied by zero; UCB exploration is count-based per scope, not per context), thread identity/anchors (previously shown identical), regime detection (labelled epoch), durable evidence (≤ 24 observations per bank, window 64). Unified is therefore identical to explanation_full on this benchmark (verified: 0 differing predictions).
+* Benchmark structure: express is optimal only when standard fails and express works, which is 24 of 128 contexts. In 66 of 128 contexts both actions share a truth value and the decision is worth only 0.16. Brier weights every action in every context equally.
+
+**Design (`causal_diagnostic.py`).** All learners train in lockstep on one evidence stream. At each held-out checkpoint every decision is `CausalRun.act(case, learn=False)` on a deep copy of the frozen learner, exactly the historical procedure. Interventions replace only the interpreter's prediction source (`SubstitutedBeliefs`) on a frozen explanation host (refining path) and a one-pass host (direct path). Sources: each learner's own predictions; a causal oracle (P* = 0.91/0.09 from the private rule); a hindsight oracle (realized outcomes); partial oracles that correct only one action. Oracles are built after acting and never enter learner state. Decisions are scored by noiseless expected utility EU(a) = 2P*(a) − 1 − cost(a), alongside the historical realized reward. Streams: matched (uniform behavior policy), online (own UCB choices), and swap (each learner retrained on another learner's exact online action stream).
+
+**Integrity controls (all passed).**
+* Frozen-state digest unchanged at all 960 final checkpoints (+600 historical/dev).
+* Replay reproduces the committed seed-1301 reference and the historical held-out choices exactly.
+* 0 of 99,840 audited decisions departed from the value argmax; 0 host-invariance violations; 0 misattributed outcomes.
+* A focused test proves that substituted predictions flip the action exactly at p_E − p_S = 0.08 on both selector paths.
+* Oracle evaluation leaves continued learning identical to an untouched twin.
+* Deterministic rerun; independent-process restart; replaying a learner's own online stream reproduces its state.
+
+**Protocol and seeds.** Protocol, metrics and analysis rules were committed in `c220623` before any historical or final run. Dev: the 15 E12 design and replication seeds. Historical reanalysis: unified final seeds 1301–2213 (where the discrepancy was observed; not independent). Final: 40 never-used seeds 4001 + 37k, run once. Intervals are seed-paired percentile bootstraps.
+
+#### Results — 40 independent final seeds (1,280 held-out decisions per learner and stream)
+
+| | Matched episodic | Matched explanation | Online episodic | Online explanation |
+| --- | ---: | ---: | ---: | ---: |
+| Expected reward (oracle 0.292; always-standard 0.024) | 0.037 | **0.139** | 0.049 | **0.113** |
+| Realized reward | 0.042 | 0.149 | 0.061 | 0.128 |
+| Best action chosen | **79.5%** | 73.2% | **80.2%** | 71.5% |
+| Express chosen (optimal 18.1%) | 7.0% | 36.2% | 6.7% | 36.2% |
+| False express / missed express | 4.7% / 15.9% | 22.4% / 4.4% | 4.2% / 15.6% | 23.3% / 5.2% |
+| All-action Brier | 0.2375 | **0.2068** | 0.2384 | **0.2051** |
+| Noiseless squared error | 0.156 | 0.130 | 0.157 | 0.129 |
+| AUC standard / express | 0.71 / 0.67 | 0.80 / 0.81 | 0.71 / 0.66 | 0.83 / 0.76 |
+| Advantage error \|Â − A\| | 0.787 | 0.763 | 0.792 | 0.774 |
+
+Paired explanation_full − episodic_only (40 seeds):
+* **Expected reward:** matched **+0.102 [+0.068, +0.135]** (34/6 seeds); online **+0.064 [+0.037, +0.093]** (31/9).
+* **Realized reward:** matched +0.106 [+0.056, +0.156]; online +0.067 [+0.025, +0.106].
+* **Brier:** −0.031 and −0.033. Advantage error −0.024 [−0.058, +0.013] and −0.018 [−0.051, +0.015], neither significant.
+* **Best-action accuracy:** −0.063 and −0.087. The learner with better reward chooses the best action *less* often.
+* Same against strong_one_pass: +0.093 and +0.077.
+
+Where the difference comes from (online; the matched stream is similar):
+* By stakes: high-stakes contexts +0.089, low-stakes contexts −0.025.
+* By family: coordination 0 and 1 +0.031 / +0.035, delivery +0.003, repair −0.004. Delivery improves prediction most (SE 0.123 vs 0.154) yet gains almost no reward. Its always-standard baseline is already 0.226, and only 10% of its contexts reward express.
+
+Decision-change taxonomy (online):
+* 68% of decisions with improved predictions leave the action unchanged.
+* Improved and changed: 143 beneficial (+0.149) vs 124 harmful (−0.016).
+* Worsened and changed: 13 beneficial (+0.010) vs 143 harmful (−0.079).
+* Changed decisions are 43% high-stakes; they carry nearly all of the value.
+
+Margin and calibration:
+* Explanation errors are confident: best-action accuracy is only 0.79–0.81 at \|V_E − V_S\| ≥ 0.6, and 0.41–0.55 near the boundary.
+* Reliability: a predicted 0.87 corresponds to P* ≈ 0.77–0.82 for standard and ≈ 0.68–0.71 for express; 0.13–0.14 corresponds to ≈ 0.15–0.23.
+* Episodic predictions sit at about 0.5: 89–95% fall in the 0.4–0.6 bin. Its decisions are mostly the cheap default.
+
+Interventions on the frozen explanation host (expected reward, paired vs its own predictions):
+* Causal oracle: +0.153 (matched) and +0.179 (online), 40/40.
+* Correcting only express: +0.112 / +0.143. Correcting only standard: +0.120 / +0.125.
+* Episodic predictions in the same host: −0.102 / −0.064.
+* Both actions' errors matter; neither alone is the bottleneck.
+
+Experience (online swap):
+* Learner effect with the evidence stream fixed: +0.090 [+0.063, +0.118] on the episodic stream and +0.073 [+0.043, +0.103] on the explanation stream.
+* Stream effect with the learner fixed: −0.026 [−0.055, +0.002] for explanation (it does slightly *worse* on its own exploration) and +0.009 [−0.007, +0.025] for episodic.
+* Online actions first diverge after a median of 4 experiences (range 2–29); 31% of training actions differ.
+* Exploration history does not explain the discrepancy.
+
+Cost: explanation 6.4 ms CPU per training experience vs 2.0 (episodic); 3.5 vs 2.2 ms per decision; 326 rules scored per experience; 232 KB vs 2 KB learned state.
+
+Measurement:
+* The per-seed SD of the paired expected-reward difference is 0.09–0.11, with outcome noise *already removed*; realized reward raises it to 0.13–0.16.
+* Minimum detectable effect at 80% power: about 0.04 for expected reward with 40 seeds, vs about 0.08–0.10 with 10 seeds and about 0.14 for realized reward with 10 seeds.
+* Seed-level correlation between prediction improvement and reward improvement is moderate: ΔSE vs ΔEU −0.34 (matched) and −0.56 (online).
+
+**Historical reanalysis (seeds 1301–2213; not independent).**
+* The harness reproduces the journal's figures exactly: online realized 0.0992 vs 0.0838; Brier 0.2379 vs 0.2093; matched 0.0727 vs 0.0295.
+* Under expected reward, online explanation − episodic is **+0.016 [−0.024, +0.051]** (realized: −0.016). Outcome noise alone flipped the sign.
+* Matched: −0.014 [−0.074, +0.054]. On these seeds the matched explanation learner barely improved prediction (SE −0.006), and its false-express rate was 28.7%.
+
+**Post-hoc exploratory check (added after the final run; not pre-registered).** A per-action reliability map was fitted on dev seeds using evaluation-only truth and applied to the final seeds. It keeps discrimination and recalibrates probabilities. Result: decisions do not improve (matched +0.003 [−0.010, +0.016], online −0.006 [−0.021, +0.008]). Calibration is therefore **not** the decision bottleneck. On the historical matched seeds the same map helped (+0.048, 8/2), which is consistent with those seeds being atypically overconfident.
+
+**Diagnosis.**
+1. *Measurement problem (primary, supported).* The reported non-replication came from 10 seeds scored by one noisy realized outcome per decision. That benchmark could not detect effects below about 0.1. With noise-free expected reward and 40 fresh seeds, the explanation learner's decision advantage is clear in both protocols and also holds in realized reward.
+2. *No valuation or selection defect (supported).* The value equation equals the world's expected reward. The selector and the refiner follow the value argmax in 100% of decisions, and substituted predictions move the decision exactly at the analytic boundary.
+3. *The conversion is lossy (supported), for structural reasons.*
+   * Brier improves on every context, but only about 18% of contexts reward deviating from the cheap default, and 52% are low-stakes.
+   * About two-thirds of prediction improvements change nothing. Changed decisions split nearly evenly by count into beneficial and harmful, and value comes from the few high-stakes flips.
+   * The explanation learner pays a consistent tax of false-express choices (−0.025 from low-stakes contexts plus about −0.08 from confidently wrong flips).
+4. *Not calibration, not exploration (falsified as primary causes).* Post-hoc recalibration does not help, and the swap design shows the evidence stream is not responsible.
+5. *Remaining gap: discrimination on unseen contexts.* Explanation_full still leaves 0.15–0.18 expected reward below the causal oracle. The partial oracles show that errors in *both* per-action explanations generalising to withheld combinations cause it (AUC about 0.8; the advantage estimate is no better than episodic's). Which representation change would fix that is a hypothesis, not a finding.
+
+**Not established.** That any particular explanation-language or beam change would reduce the remaining false-express rate; generality beyond this synthetic two-action world.
+
+**Reproduce.**
+* `python -m scenario_chunking.causal_diagnostic {dev|historical|final}` writes `results-e12-diagnostic/<set>/` (summary, decisions, training, raw results).
+* `exploratory_calibration(...)` regenerates the post-hoc check.
+* Committed summary: `docs/e12_diagnostic_summary.json`.
+* Tests: `tests/test_causal_diagnostic.py`.
+
 ## Working-memory activation — experimental candidate, unverified integration
 
 *Written 2026-10-10 against the Experiment 3 code base; it was left uncommitted and merged onto the post-E12 `main` on 2026-10-11. Its hypothesis has not been tested since.*
