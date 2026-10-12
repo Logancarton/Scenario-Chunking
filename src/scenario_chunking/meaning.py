@@ -114,6 +114,78 @@ class MeaningInterpreter:
         return {"values": values, "predictions": predictions,
                 "provenance": provenance}
 
+    ROUTES = ("standard", "express")
+
+    def decision_analysis(self, cues: frozenset[str], *, constraints: dict,
+                          permitted: frozenset[str], calibrate=None) -> dict:
+        """E12 investigation valuation from the one learner's CURRENT beliefs only.
+
+        V(route) = p * gain - (1 - p) * loss - cost with public stakes, so the
+        severity of failure enters every comparison; deferral has its public
+        safe value. For each uninspected variable X the myopic value of
+        information is E_x[max_a V(a | x)] - max_a E_x[V(a | x)], over the final
+        actions that are permitted (what could actually be done after looking).
+        ``calibrate(procedure, familiarity, p)`` optionally replaces the model's
+        claimed probability by the organism's learned track record (trust).
+        No hidden value, private rule or counterfactual outcome is read here.
+        """
+        stakes, defer = constraints["stakes"], float(constraints["defer_value"])
+        unknown = sorted(l.split(":", 2)[1] for l in cues if l.startswith("pair:") and l.endswith(":?"))
+        queries, index = [cues], {}
+        for axis in unknown:
+            for value in constraints["domains"][axis]:
+                index[(axis, value)] = len(queries)
+                queries.append((cues - {f"pair:{axis}:?"}) | {f"pair:{axis}:{value}"})
+        beliefs = {p: self.learner.explanation_beliefs(queries, p) for p in self.ROUTES}
+        def value(p, belief):
+            q = belief["probability"]
+            if calibrate is not None:
+                q = calibrate(p, belief["familiarity"], q)
+            s = stakes[p]
+            return q, q * s["gain"] - (1 - q) * s["loss"] - s["cost"]
+        table = {p: [value(p, b) for b in beliefs[p]] for p in self.ROUTES}
+        finals = [p for p in self.ROUTES if p in permitted]
+        def best(i):
+            return max([table[p][i][1] for p in finals] + [defer])
+        voi = {}
+        for axis in unknown:
+            dist = self.learner.variable_distribution(cues, axis, constraints["domains"][axis])
+            informed = sum(dist[v] * best(index[(axis, v)]) for v in dist)
+            now = max([sum(dist[v] * table[p][index[(axis, v)]][1] for v in dist) for p in finals] + [defer])
+            voi[axis] = round(max(0.0, informed - now), 9)
+        values = {"route:" + p: table[p][0][1] for p in self.ROUTES}
+        values["route:defer"] = defer
+        predictions = {}
+        for p in self.ROUTES:
+            record = dict(beliefs[p][0])
+            record["model_probability"], record["probability"] = record["probability"], table[p][0][0]
+            predictions["route:" + p] = record
+        predictions["route:defer"] = {"probability": 1.0, "uncertainty": 0.0, "evidence_ids": [],
+                                      "hypotheses": []}
+        return {"values": values, "predictions": predictions, "voi": voi,
+                "now": max([values["route:" + p] for p in finals] + [defer]),
+                "unknown": unknown, "belief_queries": len(queries) * len(self.ROUTES)}
+
+    def investigation_values(self, cues: frozenset[str], actions: list[Action], *,
+                             constraints: dict, permitted: frozenset[str], calibrate=None) -> dict:
+        """Translate beliefs into values for every candidate, including inspection.
+
+        Inspecting X is valued as deciding now plus the information value of X
+        minus its public cost; the selector compares it with acting directly.
+        """
+        analysis = self.decision_analysis(cues, constraints=constraints, permitted=permitted,
+                                          calibrate=calibrate)
+        values, predictions = dict(analysis["values"]), dict(analysis["predictions"])
+        for action in actions:
+            if action.kind == "inspect":
+                axis = action.target
+                gain = analysis["voi"][axis] - constraints["hidden"][axis]
+                values[action.label] = analysis["now"] + gain
+                predictions[action.label] = {"probability": 1.0, "uncertainty": 0.0,
+                                             "evidence_ids": [], "hypotheses": [],
+                                             "information_value": analysis["voi"][axis]}
+        return {**analysis, "values": values, "predictions": predictions}
+
     def incremental_episodic_values(self, hits, cues: frozenset[str],
                                     actions: list[Action], costs: dict[str, float]) -> dict:
         """A strong pure-case-memory baseline with no generalized relationships."""

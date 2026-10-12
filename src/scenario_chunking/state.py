@@ -83,6 +83,33 @@ class CognitiveState:
     context_cues: frozenset[str] = frozenset()
     # Explicit task identity; observations keep their distinct episode IDs.
     thought_key: str | None = None
+    # E12 investigation. Hard constraints come only from a public authorization
+    # signal; they can be added, never lifted, and no learning owner holds a
+    # reference to them. Risk and preference are valuation, not permission.
+    prohibited: frozenset[str] = frozenset()
+    investigation: dict | None = None
+    revealed: dict[str, str] = field(default_factory=dict)
+
+    def authorize(self, prohibited) -> None:
+        """Apply a public authorization restriction (monotone: only tightens)."""
+        self.prohibited = self.prohibited | frozenset(prohibited)
+
+    def permissible(self, action: Action) -> bool:
+        return not (action.kind == "route" and action.target in self.prohibited)
+
+    def investigation_context(self, constraints: dict) -> None:
+        """Public decision constraints: hidden variables, domains, stakes, deferral."""
+        self.investigation = {"hidden": dict(constraints["hidden"]),
+                              "domains": dict(constraints["domains"]),
+                              "stakes": {p: dict(v) for p, v in constraints["stakes"].items()},
+                              "defer_value": float(constraints["defer_value"]),
+                              "budget": int(constraints.get("budget", len(constraints["hidden"])))}
+        self.authorize(constraints["prohibited"])
+
+    def reveal(self, axis: str, value: str) -> None:
+        if self.investigation is None or axis not in self.investigation["hidden"] or axis in self.revealed:
+            raise ValueError("only an unrevealed hidden variable can be revealed")
+        self.revealed[axis] = value
 
     def schedule_temporal(self, *, expectation_id: str, subject: str, context: str,
                           source_event_id: str, due_at: float, confidence: float) -> TimedExpectation:
@@ -216,6 +243,14 @@ class CognitiveState:
         if self.goal_id == "response_dispatch":
             return [Action("route", target="standard"),
                     Action("route", target="express")]
+        if self.goal_id == "investigative_dispatch":
+            # Every viable action is a candidate; permission is enforced by the
+            # selector, never by omitting an action from evaluation.
+            info = self.investigation or {"hidden": {}, "budget": 0}
+            spent = len(self.revealed)
+            inspect = [Action("inspect", target=axis) for axis in sorted(info["hidden"])
+                       if axis not in self.revealed and spent < info["budget"]]
+            return [Action("route", target=p) for p in ("standard", "express", "defer")] + inspect
         actions: list[Action] = []
         if self.storage_name not in self.inspected:
             actions.append(Action("inspect_storage", target=self.storage_name))
@@ -235,9 +270,9 @@ class CognitiveState:
         return actions
 
     def action_features(self, action: Action) -> frozenset[str]:
-        if self.goal_id == "response_dispatch":
+        if self.goal_id in ("response_dispatch", "investigative_dispatch"):
             return self.context_cues | frozenset({
-                "goal:response_dispatch", "action:" + action.kind,
+                "goal:" + self.goal_id, "action:" + action.kind,
                 "procedure:" + (action.target or action.kind),
             })
         if self.goal_id == "temporal_decisions":
@@ -271,11 +306,11 @@ class CognitiveState:
         return frozenset(features)
 
     def retrieval_query(self) -> RetrievalQuery:
-        if self.goal_id == "response_dispatch":
+        if self.goal_id in ("response_dispatch", "investigative_dispatch"):
             return RetrievalQuery(
                 goal_id=self.goal_id,
                 semantic_tags=frozenset(cue for cue in self.context_cues if "&" not in cue) |
-                frozenset({"goal:response_dispatch", "procedure:standard", "procedure:express"}),
+                frozenset({"goal:" + self.goal_id, "procedure:standard", "procedure:express"}),
                 current_time=self.current_time,
                 desired_event_kinds=frozenset({EventKind.ACTION, EventKind.OUTCOME}),
             )
