@@ -579,7 +579,7 @@ jobs:
           assert len(r["summary"]) == 6 * 4
           assert all(v["violations"] == 0 for v in r["summary"].values())
           assert r["summary"]["adaptive_sparse:delivery"]["mean_active_axes"] <= 2
-          PYTHON
+          PY
       - name: Compile and explicitly scoped diff check
         run: |
           python -m compileall -q src tests scripts
