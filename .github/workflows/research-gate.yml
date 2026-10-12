@@ -474,3 +474,79 @@ jobs:
             results-scaling/
             results-temporal/
           if-no-files-found: ignore
+
+  e12-sparse-and-hotpath-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - name: Sparse activation ownership, work saving, recovery and safety
+        run: python -m pytest -q tests/test_e12_sparse_activation.py
+      - name: Pinned original-main versus candidate complete trajectories
+        env:
+          E12_PINNED_MAIN: 71473242f354ad7b82e9939a72539142f4dd0be3
+        run: |
+          mkdir -p /tmp/e12-pinned-main
+          git archive "$E12_PINNED_MAIN" src | tar -x -C /tmp/e12-pinned-main
+          PYTHONHASHSEED=0 PYTHONPATH=/tmp/e12-pinned-main/src python scripts/e12_equivalence_probe.py --output /tmp/e12-main.json
+          PYTHONHASHSEED=0 PYTHONPATH="$PWD/src" python scripts/e12_equivalence_probe.py --output /tmp/e12-candidate.json
+          python - <<'PYTHON'
+          import ast, json, os, pathlib, subprocess
+          base = json.load(open("/tmp/e12-main.json"))
+          now = json.load(open("/tmp/e12-candidate.json"))
+          if base["rows"] != now["rows"]:
+              for key in base["rows"]:
+                  for i, (a, b) in enumerate(zip(base["rows"][key], now["rows"][key])):
+                      if a != b:
+                          print("DIVERGENCE", key, i)
+                          for field in a:
+                              if a[field] != b[field]:
+                                  print(field, str(a[field])[:1600], str(b[field])[:1600])
+                          raise SystemExit(1)
+              raise SystemExit("unexpected trajectory difference")
+          print("EXACT TRAJECTORY EQUIVALENCE", len(base["rows"]), "runs")
+          for field in ("cpu_seconds", "peak_traced_bytes"):
+              before, after = base["metrics"][field], now["metrics"][field]
+              print(field, {"main": before, "candidate": after, "change_pct": 100 * (after / before - 1)})
+          pinned = os.environ["E12_PINNED_MAIN"]
+          paths = ("src/scenario_chunking/causal_metacognition.py",
+                   "src/scenario_chunking/meaning.py",
+                   "src/scenario_chunking/refinement.py",
+                   "src/scenario_chunking/policy.py")
+          for path in paths:
+              old = subprocess.check_output(["git", "show", pinned + ":" + path], text=True)
+              new = pathlib.Path(path).read_text()
+              def measures(s):
+                  t = ast.parse(s)
+                  return len(s.splitlines()), sum(isinstance(n, (ast.If, ast.For, ast.While, ast.Try))
+                                                  for n in ast.walk(t))
+              print("complexity lines/branch-nodes", path, "main", measures(old),
+                    "candidate", measures(new))
+          PYTHON
+      - name: Controlled exploratory three-policy live integration smoke
+        run: |
+          python scripts/e12_activation_study.py --seeds 31 --pretrain 4 --adapt 2 --heldout 3 --output results-e12-sparsity-smoke.json
+          python - <<'PYTHON'
+          import json
+          r = json.load(open("results-e12-sparsity-smoke.json"))
+          assert r["status"] == "exploratory"
+          assert len(r["summary"]) == 3 * 4
+          assert all(s["violations"] == 0 for s in r["summary"].values())
+          assert r["summary"]["fixed_sparse:heldout_delivery"]["mean_active_axes"] == 2
+          PYTHON
+      - name: Compile and diff check
+        run: |
+          python -m compileall -q src tests scripts
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e12-sparsity-audit
+          path: results-e12-sparsity-smoke.json
+          if-no-files-found: ignore
